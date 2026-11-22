@@ -1,0 +1,25 @@
+[project]
+name = "sheetmcp"
+version = "0.1.0"
+description = "The Excel/CSV MCP server that actually works: formulas, SQL across many files, safe writes. No API keys."
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [{ name = "SheetMCP contributors" }]
+keywords = ["mcp", "model-context-protocol", "excel", "csv", "xlsx", "duckdb", "llm", "claude", "cursor"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Office/Business :: Financial :: Spreadsheet",
+]
+dependencies = ["sheetmcp-core==0.1.0", "mcp>=1.12,<2"]
+
+[project.scripts]
+sheetmcp = "sheetmcp.__main__:main"
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sheetmcp"]

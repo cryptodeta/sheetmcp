@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "sheets": {
+      "command": "docker",
+      "args": ["run", "--rm", "-i", "-v", "/path/to/spreadsheets:/data", "sheetmcp"]
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "sheets": {
+      "command": "uvx",
+      "args": ["sheetmcp", "/Users/you/Documents/spreadsheets", "--root", "/Users/you/Downloads"]
+    },
+    "sheets-readonly": {
+      "command": "uvx",
+      "args": ["sheetmcp", "--read-only", "/Users/you/Finance"],
+      "env": { "SHEETMCP_MAX_ROWS": "50" }
+    }
+  }
+}

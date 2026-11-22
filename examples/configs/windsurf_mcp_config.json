@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "sheets": {
+      "command": "uvx",
+      "args": ["sheetmcp", "/path/to/spreadsheets"]
+    }
+  }
+}

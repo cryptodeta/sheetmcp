@@ -1,0 +1,14 @@
+Customer,Name,Country,Segment,CreditLimit
+C100,Acme Corp,Bangladesh,SMB,1000
+C101,Globex,USA,Enterprise,2000
+C102,Initech,Germany,SMB,3000
+C103, Umbrella ,India,Enterprise,4000
+C104,Hooli,Japan,SMB,5000
+C105,Stark Ind,Brazil,Enterprise,N/A
+C106,Wayne Ent,Bangladesh,SMB,7000
+C107,Wonka,USA,Enterprise,8000
+C108,Cyberdyne,Germany,SMB,9000
+C109,Soylent,India,Enterprise,10000
+C110,Tyrell,Japan,SMB,11000
+C111,Aperture,Brazil,Enterprise,12000
+C102,Initech,Germany,SMB,3000

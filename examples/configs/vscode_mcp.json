@@ -1,0 +1,9 @@
+{
+  "servers": {
+    "sheets": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": ["sheetmcp", "${workspaceFolder}"]
+    }
+  }
+}

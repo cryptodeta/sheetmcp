@@ -1,0 +1,17 @@
+[
+  {
+    "event": "signup",
+    "customer": "C100",
+    "ts": "2024-01-03T10:00:00"
+  },
+  {
+    "event": "purchase",
+    "customer": "C101",
+    "ts": "2024-01-05T12:30:00"
+  },
+  {
+    "event": "churn",
+    "customer": "C104",
+    "ts": "2024-02-11T08:15:00"
+  }
+]
