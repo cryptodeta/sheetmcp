@@ -8,8 +8,6 @@ with charts. Pure Python, runs on macOS / Linux / Windows, **no Excel, no API ke
 uvx sheetmcp ~/Documents/spreadsheets
 ```
 
-[বাংলা নির্দেশিকা নিচে আছে ↓](#বাংলা-নির্দেশিকা)
-
 ---
 
 ## Why SheetMCP?
@@ -262,44 +260,3 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). License: [MIT](LICENSE).
 * `insert_delete` updates formulas, named ranges, tables and merged cells; conditional-formatting and data-validation
   ranges are not shifted.
 * Structured references (`Table1[Column]`) are read and preserved but not evaluated.
-
----
-
-## বাংলা নির্দেশিকা
-
-**SheetMCP** হলো একটি ফ্রি, ওপেন-সোর্স MCP সার্ভার, যা দিয়ে Claude, Cursor, VS Code বা Windsurf-এর মতো AI অ্যাপ
-আপনার Excel (.xlsx), CSV, Parquet ও JSON ফাইল পড়তে, বিশ্লেষণ করতে ও নিরাপদে এডিট করতে পারে।
-কোনো API key, অ্যাকাউন্ট বা Microsoft Excel লাগে না। Windows, macOS, Linux সব জায়গায় চলে।
-
-### কেন এটা আলাদা
-
-* ফর্মুলা আর মান (value) **দুটোই** একসাথে দেখায়। স্ক্রিপ্টে বানানো ফাইলে মান না থাকলে নিজেই হিসাব করে দেয়।
-* এক ফোল্ডারের অনেক CSV/Excel ফাইলে একসাথে **SQL** চালানো যায়, join-ও করা যায়।
-* লেখার সময় ফরম্যাটিং, চার্ট, অন্য ফর্মুলা নষ্ট হয় না। প্রতিবার আগে **ব্যাকআপ** রাখে, আর `dry_run` দিয়ে আগে দেখে নেওয়া যায়।
-* মাত্র ১৮টি পরিষ্কার টুল। প্রতিটি error-এ কী সমস্যা আর কীভাবে ঠিক করবেন, দুটোই বলে দেয়।
-* টাকার ফরম্যাট (৳ BDT) সহ সুন্দর রিপোর্ট, চার্ট, conditional formatting বানাতে পারে।
-
-### ১ মিনিটে শুরু করুন
-
-1. [uv](https://docs.astral.sh/uv/) ইনস্টল করুন: `pip install uv`
-2. আপনার AI অ্যাপের কনফিগে নিচের অংশটি যোগ করুন (ফোল্ডারের পাথ বদলে নিন):
-
-```json
-{
-  "mcpServers": {
-    "sheets": { "command": "uvx", "args": ["sheetmcp", "C:/Users/apni/Documents/excel"] }
-  }
-}
-```
-
-3. অ্যাপ রিস্টার্ট করে জিজ্ঞেস করুন: *"আমার ফোল্ডারের সব Excel ফাইল দেখাও আর অঞ্চলভিত্তিক বিক্রির সারাংশ দাও"*।
-
-শুধু পড়ার অনুমতি দিতে চাইলে `"args": ["sheetmcp", "--read-only", "ফোল্ডার"]` দিন।
-Docker বা HTTP দিয়ে চালাতে উপরের ইংরেজি অংশের নির্দেশনা দেখুন।
-
-### কিছু উদাহরণ প্রশ্ন
-
-* "sales.xlsx ফাইলে কোন কোন ফর্মুলায় error আছে? কারণসহ ঠিক করার উপায় বলো।"
-* "জানুয়ারি থেকে মার্চের সব CSV একসাথে করে একটা Excel ফাইলে সেভ করো।"
-* "customers.csv-এর ডেটায় কী কী সমস্যা আছে (ডুপ্লিকেট, ফাঁকা ঘর)?"
-* "পুরনো আর নতুন ভার্সনের ফাইলে কী কী বদলেছে দেখাও।"
