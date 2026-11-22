@@ -15,6 +15,7 @@ from openpyxl.styles import Font
 from .base import Base
 from .errors import SheetError
 from .fileio import (
+    SHEETED_KINDS,
     TABULAR_EXT,
     atomic_write,
     conv_dir,
@@ -24,8 +25,8 @@ from .fileio import (
     load_workbook,
     output_format,
     save_workbook,
+    sheet_names,
     sniff_dialect,
-    xlsx_sheet_names,
 )
 from .util import jsonable, qident, qstr, safe_identifier, to_markdown
 
@@ -87,7 +88,7 @@ class SqlOps(Base):
         path, sheet = self._split_spec(spec, sheet)
         p = self.sb.resolve(path)
         kind = file_kind(p)
-        if kind == "excel":
+        if kind in SHEETED_KINDS:
             csv_path, title = excel_to_csv_cache(p, sheet, header_row)
             return (
                 f"read_csv({qstr(str(csv_path))}, header=true, auto_detect=true, sample_size=-1)",
@@ -140,12 +141,15 @@ class SqlOps(Base):
                 if not f.is_file() or f.suffix.lower() not in TABULAR_EXT or f.name.startswith("."):
                     continue
                 stem = safe_identifier(f.stem)
-                if file_kind(f) == "excel":
+                if file_kind(f) in SHEETED_KINDS:
                     # lazy: only convert sheets the SQL mentions (alias or alias__sheet)
                     cand = [w for w in words if w == stem or w.startswith(stem + "__")]
                     if not cand or all(w in registered for w in cand):
                         continue
-                    names = xlsx_sheet_names(f)
+                    try:
+                        names = sheet_names(f)
+                    except SheetError:
+                        continue
                     for nm in names:
                         a = f"{stem}__{safe_identifier(nm)}"
                         if a in words and a not in registered:
@@ -258,6 +262,7 @@ class SqlOps(Base):
         fmt: str | None = None,
         sheet: str | None = None,
         registered: dict[str, str] | None = None,
+        csv_dialect: str = "standard",
     ) -> dict:
         self._writable("save results")
         out = self.sb.resolve(output, must_exist=False)
@@ -275,9 +280,22 @@ class SqlOps(Base):
                 "json": "FORMAT json, ARRAY true",
                 "jsonl": "FORMAT json",
             }[fmt]
-            backup = atomic_write(
-                out, lambda t: con.execute(f"COPY ({sql}) TO {qstr(str(t))} ({opts})"), self.cfg
-            )
+            dialect = (csv_dialect or "standard").lower().replace("-", "_")
+            if dialect not in ("standard", "excel", "google_sheets"):
+                raise SheetError(
+                    f"Unknown csv_dialect '{csv_dialect}'.", "Use standard, excel or google_sheets."
+                )
+
+            def copy_to(t: Path) -> None:
+                extra = ""
+                if fmt in ("csv", "tsv") and dialect == "google_sheets":
+                    extra = ", DATEFORMAT '%Y-%m-%d', TIMESTAMPFORMAT '%Y-%m-%d %H:%M:%S'"
+                con.execute(f"COPY ({sql}) TO {qstr(str(t))} ({opts}{extra})")
+                if fmt in ("csv", "tsv") and dialect == "excel":  # BOM so Excel detects UTF-8 (৳, é, ...)
+                    data = t.read_bytes()
+                    t.write_bytes(b"\xef\xbb\xbf" + data)
+
+            backup = atomic_write(out, copy_to, self.cfg)
             rows_written = n
         elif fmt == "md":
             cur = con.execute(sql)
@@ -340,7 +358,7 @@ class SqlOps(Base):
     # ------------------------------------------------------------------ public ops
     def query(
         self,
-        sql: str,
+        sql: str | None = None,
         tables: Any = None,
         folder: str | None = None,
         limit: int | None = None,
@@ -349,7 +367,12 @@ class SqlOps(Base):
         output_sheet: str | None = None,
         format: str = "json",
     ) -> dict:
-        """Run a SELECT over one or many files. Files are tables (auto-registered by name or via tables=)."""
+        """Run a SELECT over one or many files. Files are tables (auto-registered by name or via tables=).
+
+        Without sql, returns the catalog of table names and columns you can query.
+        """
+        if not sql or not str(sql).strip():
+            return self.catalog(folder)  # type: ignore[attr-defined]
         con = self._connect()
         try:
             registered = self._register(con, sql, tables, folder)
@@ -617,15 +640,17 @@ class SqlOps(Base):
         sheet: str | None = None,
         all_sheets: bool = False,
         format: str | None = None,
+        csv_dialect: str = "standard",
     ) -> dict:
-        """Convert between csv/tsv/xlsx/parquet/json/jsonl/markdown. all_sheets=True converts every sheet."""
+        """Convert between csv/tsv/xlsx/parquet/json/jsonl/markdown (inputs also .xls/.ods/.html tables).
+
+        all_sheets=True converts every sheet. csv_dialect: standard | excel (UTF-8 BOM) | google_sheets.
+        """
         p = self.sb.resolve(input)
         con = self._connect()
         try:
-            if all_sheets and file_kind(p) == "excel":
-                wb = load_workbook(p, formulas=False, read_only=True, fresh=True)
-                names = wb.sheetnames
-                wb.close()
+            if all_sheets and file_kind(p) in SHEETED_KINDS:
+                names = sheet_names(p)
                 out = self.sb.resolve(output, must_exist=False)
                 fmt = output_format(out, format)
                 results = []
@@ -637,10 +662,23 @@ class SqlOps(Base):
                         target = out.with_name(
                             f"{out.stem}_{safe_identifier(nm)}.{out.suffix.lstrip('.') or fmt}"
                         )
-                        results.append(self._write_output(con, f"SELECT * FROM {expr}", str(target), fmt))
+                        results.append(
+                            self._write_output(
+                                con, f"SELECT * FROM {expr}", str(target), fmt, csv_dialect=csv_dialect
+                            )
+                        )
                 return {"input": self.sb.display(p), "outputs": results}
             expr, label = self.source_sql(str(p), sheet)
-            return self._write_output(con, f"SELECT * FROM {expr}", output, format, None) | {"input": label}
+            res = self._write_output(
+                con, f"SELECT * FROM {expr}", output, format, None, csv_dialect=csv_dialect
+            )
+            if csv_dialect == "google_sheets":
+                ncols = len(self._columns(con, expr))
+                if res["rows_written"] * ncols > 10_000_000:
+                    res["warning"] = (
+                        "Google Sheets allows at most 10 million cells per spreadsheet; split the file."
+                    )
+            return res | {"input": label}
         finally:
             con.close()
 
@@ -778,9 +816,25 @@ class SqlOps(Base):
                                 "column": c,
                                 "issue": "untrimmed_whitespace",
                                 "detail": f"{ws_} value(s) have leading/trailing spaces.",
-                                "fix": "Use trim() in transform/query.",
+                                "fix": "clean(operations=[{'op': 'trim'}])",
                             }
                         )
+                    if s.get("approx_unique") and s["approx_unique"] <= 5000:
+                        groups = con.execute(
+                            f"SELECT lower(trim({qc})) AS k, list(DISTINCT {qc} ORDER BY {qc}) AS variants FROM {expr} "
+                            f"WHERE {qc} IS NOT NULL GROUP BY 1 HAVING count(DISTINCT {qc}) > 1 ORDER BY count(*) DESC LIMIT 3"
+                        ).fetchall()
+                        if groups:
+                            issues.append(
+                                {
+                                    "severity": "warning",
+                                    "column": c,
+                                    "issue": "inconsistent_categories",
+                                    "detail": "Same value written differently: "
+                                    + "; ".join(" / ".join(repr(v) for v in g[1]) for g in groups),
+                                    "fix": "clean(operations=[{'op': 'trim'}, {'op': 'case', 'mode': 'title'}])",
+                                }
+                            )
                 elif s.get("q25") is not None and typ not in ("DATE", "TIMESTAMP", "TIME", "BOOLEAN"):
                     try:
                         q1, q3 = float(s["q25"]), float(s["q75"])
@@ -799,6 +853,29 @@ class SqlOps(Base):
                                         "detail": f"{n_out} value(s) outside [{lo:.4g}, {hi:.4g}] (1.5×IQR).",
                                     }
                                 )
+                    except (TypeError, ValueError, duckdb.Error):
+                        pass
+                    try:  # robust z-score (median / MAD) anomalies with row numbers
+                        an = con.execute(
+                            f"WITH t AS (SELECT row_number() OVER () + 1 AS r, {qc} AS v FROM {expr}), "
+                            f"m AS (SELECT median(v) AS med, mad(v) AS mad, count(v) AS n FROM t) "
+                            f"SELECT r, v, abs(v - med) / (1.4826 * mad) AS z FROM t, m "
+                            f"WHERE n >= 10 AND mad > 0 AND abs(v - med) / (1.4826 * mad) > 3.5 ORDER BY z DESC LIMIT 5"
+                        ).fetchall()
+                        if an:
+                            info["anomalies"] = [
+                                {"row": r, "value": self._j(v), "robust_z": round(float(z), 2)}
+                                for r, v, z in an
+                            ]
+                            issues.append(
+                                {
+                                    "severity": "info",
+                                    "column": c,
+                                    "issue": "anomalies",
+                                    "detail": "Unusual values (robust z > 3.5): "
+                                    + ", ".join(f"row {r}: {self._j(v)}" for r, v, _ in an[:3]),
+                                }
+                            )
                     except (TypeError, ValueError, duckdb.Error):
                         pass
                 if s.get("approx_unique") and total and nullp == 0:

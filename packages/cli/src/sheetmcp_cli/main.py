@@ -10,6 +10,10 @@ Examples:
   sheetcli formulas data/model.xlsx errors
   sheetcli diff v1.xlsx v2.xlsx
   sheetcli search "acme" data/
+  sheetcli look data/                      # one-call overview of a folder or file
+  sheetcli clean data/raw.csv trim dedupe to_number:Amount -o data/clean.xlsx
+  sheetcli report data/sales.xlsx report.xlsx -g Region -m Revenue:sum -m count
+  sheetcli backups data/sales.xlsx         # list; add --undo to revert the last change
 """
 
 from __future__ import annotations
@@ -116,7 +120,48 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("text")
     p.add_argument("path", nargs="?", default=".")
     p.add_argument("--regex", action="store_true")
+
+    p = sub.add_parser("look", help="quick overview of a folder or file")
+    p.add_argument("path", nargs="?", default=".")
+    p.add_argument("-s", "--sheet")
+
+    p = sub.add_parser(
+        "clean", help="clean data: ops like trim dedupe to_number:Col to_date:Col fill_down:Col"
+    )
+    p.add_argument("source")
+    p.add_argument("ops", nargs="+", help="op or op:col1,col2 (or a JSON object)")
+    p.add_argument("-s", "--sheet")
+    p.add_argument("-o", "--output")
+    p.add_argument("-n", "--limit", type=int)
+
+    p = sub.add_parser("report", help="build a formatted Excel report")
+    p.add_argument("source")
+    p.add_argument("output")
+    p.add_argument("-g", "--group-by", action="append", required=True)
+    p.add_argument("-m", "--metric", action="append", required=True)
+    p.add_argument("-w", "--where")
+    p.add_argument("--title")
+    p.add_argument("--overwrite", action="store_true")
+
+    p = sub.add_parser("backups", help="list backups, --undo the last change, or --restore a backup")
+    p.add_argument("path", nargs="?")
+    p.add_argument("--undo", action="store_true")
+    p.add_argument("--restore")
     return ap
+
+
+def _clean_ops(items: list[str]) -> list[dict[str, Any]]:
+    ops: list[dict[str, Any]] = []
+    for it in items:
+        if it.lstrip().startswith("{"):
+            ops.append(json.loads(it))
+            continue
+        name, _, cols = it.partition(":")
+        op: dict[str, Any] = {"op": name}
+        if cols:
+            op["columns"] = [c for c in cols.split(",") if c]
+        ops.append(op)
+    return ops
 
 
 def _parse_value(v: str) -> Any:
@@ -181,6 +226,29 @@ def main(argv: list[str] | None = None) -> int:
             _out(s.diff(args.a, args.b, args.sheet_a, args.sheet_b, args.key))
         elif c == "search":
             _out(s.search(args.text, args.path, regex=args.regex))
+        elif c == "look":
+            _out(s.quick_look(args.path, args.sheet))
+        elif c == "clean":
+            _out(s.clean(args.source, _clean_ops(args.ops), args.sheet, args.output, limit=args.limit))
+        elif c == "report":
+            _out(
+                s.build_report(
+                    args.source,
+                    args.output,
+                    args.group_by,
+                    args.metric,
+                    where=args.where,
+                    title=args.title,
+                    overwrite=args.overwrite,
+                )
+            )
+        elif c == "backups":
+            if args.undo:
+                _out(s.backups(args.path, "undo"))
+            elif args.restore:
+                _out(s.backups(args.path, "restore", args.restore))
+            else:
+                _out(s.backups(args.path))
         return 0
     except SheetError as e:
         print(f"error: {e}", file=sys.stderr)

@@ -15,13 +15,16 @@ from .base import BIG_FILE_BYTES, Base
 from .errors import SheetError
 from .evaluator import Evaluator
 from .fileio import (
+    LEGACY_KINDS,
     coerce_text,
     file_kind,
     get_sheet,
     has_charts,
+    legacy_sheet,
     load_workbook,
     read_csv_grid,
     save_workbook,
+    sheet_names,
     write_csv_grid,
 )
 from .refshift import shift_address, shift_formula
@@ -108,6 +111,30 @@ class WorkbookOps(Base):
             "modified": dt.datetime.fromtimestamp(st.st_mtime).isoformat(timespec="seconds"),
         }
         preview_rows = max(0, min(int(preview_rows), 50))
+        if kind in LEGACY_KINDS:
+            from .sqlops import SqlOps
+
+            assert isinstance(self, SqlOps)
+            names = sheet_names(p)
+            info["read_only_format"] = True
+            info["note"] = f"{kind} files are read-only here; convert to .xlsx to edit (convert tool)."
+            info["sheets"] = []
+            target = legacy_sheet(p, sheet)[0] if sheet not in (None, "") else names[0]
+            for i, n in enumerate(names[:30]):
+                grid = legacy_sheet(p, n)[1]
+                entry: dict[str, Any] = {
+                    "index": i,
+                    "name": n,
+                    "max_row": len(grid),
+                    "max_column": max((len(r) for r in grid), default=0),
+                }
+                if n == target:
+                    try:
+                        entry.update(self.table_schema(str(p), n, preview_rows=preview_rows))
+                    except SheetError as e:
+                        entry["error"] = str(e)
+                info["sheets"].append(entry)
+            return info
         if kind != "excel":
             from .sqlops import SqlOps
 
@@ -219,6 +246,11 @@ class WorkbookOps(Base):
         offset = max(0, int(offset or 0))
         if kind in ("csv", "tsv"):
             return self._read_csv_range(p, range, offset, limit, format)
+        if kind in LEGACY_KINDS:
+            title, grid = legacy_sheet(p, sheet)
+            res = self._read_csv_range(p, range, offset, limit, format, grid=grid)
+            res["sheet"] = title
+            return res
         if kind != "excel":
             raise SheetError(
                 f"read_range works on .xlsx/.csv files; '{p.name}' is {kind}.",
@@ -303,8 +335,17 @@ class WorkbookOps(Base):
                 if wbf is not None:
                     wbf.close()
 
-    def _read_csv_range(self, p: Path, range: str | None, offset: int, limit: int, format: str) -> dict:
-        grid = read_csv_grid(p)
+    def _read_csv_range(
+        self,
+        p: Path,
+        range: str | None,
+        offset: int,
+        limit: int,
+        format: str,
+        grid: list[list[Any]] | None = None,
+    ) -> dict:
+        if grid is None:
+            grid = read_csv_grid(p)
         nrows = len(grid)
         ncols = max((len(r) for r in grid), default=0)
         if range:
@@ -358,9 +399,18 @@ class WorkbookOps(Base):
         parse_dates: bool = True,
         create: bool = True,
         dry_run: bool = False,
+        fill_formula: str | None = None,
+        fill_range: str | None = None,
     ) -> dict:
-        """Write a 2D block (values), individual cells ({"B2": 5}) or append rows. '=...' strings are formulas."""
-        if not values and not cells:
+        """Write a 2D block (values), individual cells ({"B2": 5}) or append rows. '=...' strings are formulas.
+
+        fill_formula + fill_range: write a formula written for the first cell (e.g. '=B2*C2' for 'D2:D100')
+        into every cell of the range with relative references adjusted, like Excel's fill-down.
+        fill_range 'D2' or 'D2:D' fills down to the last used row.
+        """
+        if fill_formula and not fill_formula.startswith("="):
+            fill_formula = "=" + fill_formula
+        if not values and not cells and not fill_formula:
             raise SheetError(
                 "Nothing to write.", "Pass values=[[...], ...] (a 2D list) and/or cells={'A1': 1}."
             )
@@ -381,6 +431,8 @@ class WorkbookOps(Base):
             raise SheetError(f"'{path}' does not exist.", "Pass create=true to create it.")
         kind = file_kind(p)
         if kind in ("csv", "tsv"):
+            if fill_formula:
+                raise SheetError("CSV files cannot hold formulas.", "Convert to .xlsx first (convert tool).")
             return self._write_csv(p, start_cell, values, cells, append, dry_run)
         if kind != "excel":
             raise SheetError(
@@ -426,6 +478,27 @@ class WorkbookOps(Base):
         for ref, v in (cells or {}).items():
             c, r, _, _ = parse_range(ref)
             put(cell_ref(c, r), v)
+        if fill_formula:
+            from openpyxl.formula.translate import Translator
+
+            if not fill_range:
+                raise SheetError(
+                    "fill_formula needs fill_range.", "Example: fill_range='D2:D100' (or 'D2' = to last row)"
+                )
+            m = re.match(r"^\$?([A-Za-z]{1,3})\$?(\d+)(?::\$?([A-Za-z]{1,3})\$?(\d*))?$", fill_range.strip())
+            if not m:
+                raise SheetError(f"Bad fill_range '{fill_range}'.", "Use 'D2:D100', 'D2:F2', 'D2:D' or 'D2'.")
+            c1, r1 = col_index(m.group(1)), int(m.group(2))
+            c2 = col_index(m.group(3)) if m.group(3) else c1
+            r2 = int(m.group(4)) if m.group(4) else max(ws.max_row, r1)
+            if (r2 - r1 + 1) * (c2 - c1 + 1) > 1_000_000:
+                raise SheetError("fill_range too large (max 1,000,000 cells).")
+            origin = cell_ref(c1, r1)
+            tr = Translator(fill_formula, origin=origin)
+            for rr in _range(r1, r2 + 1):
+                for cc in _range(c1, c2 + 1):
+                    dest = cell_ref(cc, rr)
+                    put(dest, fill_formula if dest == origin else tr.translate_formula(dest))
 
         res: dict[str, Any] = {
             "file": self.sb.display(p),
@@ -456,6 +529,8 @@ class WorkbookOps(Base):
     def _write_csv(
         self, p: Path, start_cell: str, values: Any, cells: Any, append: bool, dry_run: bool
     ) -> dict:
+        if append and values and not cells and p.exists() and p.stat().st_size > 0:
+            return self._append_csv_stream(p, values, dry_run)
         grid = read_csv_grid(p) if p.exists() else []
         changes = []
 
@@ -493,6 +568,35 @@ class WorkbookOps(Base):
             ]
         if not dry_run:
             res["backup"] = write_csv_grid(p, grid, self.cfg)
+        return res
+
+    def _append_csv_stream(self, p: Path, values: list[list[Any]], dry_run: bool) -> dict:
+        """Append rows to a CSV without loading it (constant memory, works for multi-GB files)."""
+        import csv as _csv
+
+        from .fileio import sniff_dialect
+
+        enc, delim = sniff_dialect(p)
+        res: dict[str, Any] = {
+            "file": self.sb.display(p),
+            "rows_appended": len(values),
+            "dry_run": dry_run,
+            "streamed": True,
+        }
+        if dry_run:
+            res["preview"] = values[:20]
+            return res
+        self._writable("append rows")
+        with open(p, "rb") as fh:
+            fh.seek(max(0, p.stat().st_size - 2))
+            needs_nl = not fh.read().endswith((b"\n", b"\r"))
+        with open(p, "a", newline="", encoding="utf-8" if enc.startswith("utf") else enc) as fh:
+            if needs_nl:
+                fh.write("\r\n")
+            w = _csv.writer(fh, delimiter=delim)
+            for row in values:
+                w.writerow(["" if v is None else self._j(v) for v in row])
+        res["note"] = "Appended in place (no backup needed: existing rows were not modified)."
         return res
 
     # ------------------------------------------------------------------ sheets
@@ -735,6 +839,9 @@ class WorkbookOps(Base):
             nr = shift_address(t.ref, axis, idx, delta)
             if nr:
                 t.ref = nr
+        cf_moved, dv_moved = self._shift_cf_dv(ws, axis, idx, delta)
+        if ws.auto_filter.ref:
+            ws.auto_filter.ref = shift_address(ws.auto_filter.ref, axis, idx, delta)
         res = {
             "file": self.sb.display(p),
             "sheet": ws.title,
@@ -742,12 +849,62 @@ class WorkbookOps(Base):
             "index": idx,
             "count": count,
             "formulas_updated": updated,
+            "conditional_formats_shifted": cf_moved,
+            "validations_shifted": dv_moved,
             "dry_run": dry_run,
             "new_dimensions": ws.calculate_dimension(),
         }
         if not dry_run:
             res["backup"] = save_workbook(wb, p, self.cfg)
         return res
+
+    @staticmethod
+    def _shift_cf_dv(ws: Any, axis: str, idx: int, delta: int) -> tuple[int, int]:
+        """Shift conditional-formatting and data-validation ranges (openpyxl leaves them in place)."""
+        from openpyxl.formatting.formatting import ConditionalFormattingList
+        from openpyxl.worksheet.cell_range import MultiCellRange
+
+        def shift_ranges(sqref: Any) -> str:
+            out = []
+            for r in str(sqref).split():
+                nr = shift_address(r, axis, idx, delta)
+                if nr:
+                    out.append(nr)
+            return " ".join(out)
+
+        def shift_f(f: str) -> str:
+            return shift_formula("=" + f, ws.title, ws.title, axis, idx, delta)[1:]
+
+        cf_n = 0
+        old = ws.conditional_formatting
+        new = ConditionalFormattingList()
+        for cf in old:
+            ref = shift_ranges(cf.sqref)
+            if ref != str(cf.sqref):
+                cf_n += 1
+            if not ref:
+                continue
+            for rule in cf.rules:
+                if getattr(rule, "formula", None):
+                    rule.formula = [shift_f(f) for f in rule.formula]
+                new.add(ref, rule)
+        ws.conditional_formatting = new
+        dv_n = 0
+        keep = []
+        for dv in ws.data_validations.dataValidation:
+            ref = shift_ranges(dv.sqref)
+            if ref != str(dv.sqref):
+                dv_n += 1
+            if not ref:
+                continue
+            dv.sqref = MultiCellRange(ref)
+            for attr in ("formula1", "formula2"):
+                f = getattr(dv, attr, None)
+                if f and not str(f).startswith('"'):
+                    setattr(dv, attr, shift_f(str(f)))
+            keep.append(dv)
+        ws.data_validations.dataValidation = keep
+        return cf_n, dv_n
 
 
 _ = range_boundaries  # re-exported for callers

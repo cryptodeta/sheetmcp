@@ -1,6 +1,6 @@
 [project]
 name = "sheetmcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "The Excel/CSV MCP server that actually works: formulas, SQL across many files, safe writes. No API keys."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -12,7 +12,10 @@ classifiers = [
   "Operating System :: OS Independent",
   "Topic :: Office/Business :: Financial :: Spreadsheet",
 ]
-dependencies = ["sheetmcp-core==0.1.0", "mcp>=1.12,<2"]
+dependencies = ["sheetmcp-core==0.2.0", "mcp>=1.12,<2"]
+
+[project.optional-dependencies]
+xls = ["sheetmcp-core[xls]==0.2.0"]
 
 [project.scripts]
 sheetmcp = "sheetmcp.__main__:main"

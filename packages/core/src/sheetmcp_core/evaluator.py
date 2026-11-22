@@ -21,6 +21,8 @@ from openpyxl.utils.datetime import from_excel, to_excel
 
 from .util import ERROR_VALUES, cell_ref
 
+_ADDR_RE = re.compile(r"^(?:[A-Za-z]{1,3}\d+|[A-Za-z]{1,3}\d*:[A-Za-z]{1,3}\d*|\d+:\d+)$")
+
 
 class XLErr(Exception):
     def __init__(self, code: str, detail: str = "") -> None:
@@ -383,6 +385,9 @@ class Evaluator:
         self.stack: set[tuple[str, str]] = set()
         self.max_range_cells = max_range_cells
         self.unsupported: set[str] = set()
+        self.scopes: list[dict[str, Any]] = []  # LET() bindings
+        self.current: list[tuple[str, int]] = []  # (sheet, row) of the cell being evaluated
+        self._tables: dict[str, tuple[str, Any]] | None = None
 
     # public -----------------------------------------------------------
     def evaluate_cell(self, sheet: str, coord: str) -> Any:
@@ -426,6 +431,7 @@ class Evaluator:
             if key in self.stack:
                 raise XLErr("#CIRC!", f"circular reference at {ws.title}!{coord}")
             self.stack.add(key)
+            self.current.append((ws.title, ws[coord].row))
             try:
                 try:
                     v = self.ev(parse_formula(f), ws.title)
@@ -439,6 +445,7 @@ class Evaluator:
                     v = e.code
             finally:
                 self.stack.discard(key)
+                self.current.pop()
             self.memo[key] = v
             return v
         if raw is not None and raw.__class__.__name__ == "DataTableFormula":
@@ -450,13 +457,18 @@ class Evaluator:
         v = self._cell(sheet, coord)
         return v
 
-    def ref(self, text: str, sheet: str) -> Range:
-        if text.startswith("["):
-            raise XLErr("#REF!", "external workbook references are not supported")
+    def ref(self, text: str, sheet: str) -> Any:
+        if self.scopes and "!" not in text:
+            key = text.lower()
+            for scope in reversed(self.scopes):
+                if key in scope:
+                    return scope[key]
+        if "[" in text:
+            if re.match(r"^\[\d+\]", text):
+                raise XLErr("#REF!", "external workbook references are not supported")
+            return self._structured(text, sheet)
         sh, addr = split_ref(text, sheet)
-        if "[" in addr:
-            raise XLErr("#NAME?", "structured table references (Table[Col]) are not supported yet")
-        if not re.match(r"^[A-Za-z]{0,3}\d*(:[A-Za-z]{0,3}\d*)?$", addr) or addr in {"", ":"}:
+        if not _ADDR_RE.match(addr):  # 'Ids' or 'Tax' are names, not column refs (those need a colon)
             return self._named(text, sheet)
         try:
             min_col, min_row, max_col, max_row = range_boundaries(addr.upper())
@@ -476,6 +488,91 @@ class Evaluator:
             for r in range(min_row, max_row + 1)
         ]
         return Range(grid, ws.title, (min_row, min_col))
+
+    # structured references: Table1[Col], Table1[#All], [@Col], Table1[[#This Row],[Col]], T[[A]:[C]]
+    def _table_index(self) -> dict[str, tuple[str, Any]]:
+        if self._tables is None:
+            self._tables = {}
+            for ws in self.wb.worksheets:
+                for t in getattr(ws, "tables", {}).values():
+                    self._tables[t.displayName.lower()] = (ws.title, t)
+        return self._tables
+
+    def _structured(self, text: str, sheet: str) -> Range:
+        m = re.match(r"^(?:(?P<sh>.+)!)?(?P<name>[^\[\]!]*)\[(?P<spec>.*)\]$", text)
+        if not m:
+            raise XLErr("#REF!", f"bad structured reference {text}")
+        name, spec = m.group("name"), m.group("spec")
+        tables = self._table_index()
+        if name:
+            if name.lower() not in tables:
+                raise XLErr("#REF!", f"table '{name}' not found")
+            tsheet, table = tables[name.lower()]
+        else:
+            if not self.current:
+                raise XLErr("#REF!", "[@Column] needs a cell inside a table")
+            csheet, crow = self.current[-1]
+            found = None
+            for ts, t in tables.values():
+                if ts == csheet:
+                    c1, r1, c2, r2 = range_boundaries(t.ref)
+                    if r1 <= crow <= r2:
+                        found = (ts, t)
+                        break
+            if found is None:
+                raise XLErr("#REF!", "the current cell is not inside an Excel table")
+            tsheet, table = found
+        items = re.findall(r"\[([^\]]*)\]", spec) if spec.startswith("[") else [spec]
+        col_span = ":" in re.sub(r"\[[^\]]*\]", "", spec) if spec.startswith("[") else False
+        specials, cols, this_row = [], [], False
+        for it in items:
+            it = it.strip()
+            if it.startswith("@"):
+                this_row = True
+                it = it[1:].strip().strip("[]")
+                if not it:
+                    continue
+            if it.startswith("#"):
+                specials.append(it.lower())
+            elif it:
+                cols.append(it.replace("'", ""))
+        if "#this row" in specials:
+            this_row = True
+        c1, r1, c2, r2 = range_boundaries(table.ref)
+        hdr = table.headerRowCount if table.headerRowCount is not None else 1
+        tot = table.totalsRowCount or 0
+        if this_row:
+            if not self.current:
+                raise XLErr("#VALUE!", "this-row reference outside a cell")
+            rs = re_ = self.current[-1][1]
+        elif "#all" in specials:
+            rs, re_ = r1, r2
+        elif "#headers" in specials and "#data" not in specials:
+            rs, re_ = r1, r1 + hdr - 1
+        elif "#totals" in specials and "#data" not in specials:
+            rs, re_ = r2 - tot + 1, r2
+        else:
+            rs = r1 + hdr if "#headers" not in specials else r1
+            re_ = r2 - tot if "#totals" not in specials else r2
+        names = [tc.name.lower() for tc in table.tableColumns]
+        if not names:  # tables created in this session have no column metadata yet
+            hws = self._ws(tsheet)
+            names = [
+                str(hws.cell(row=r1, column=c).value or f"Column{c - c1 + 1}").lower()
+                for c in range(c1, c2 + 1)
+            ]
+        if cols:
+            try:
+                idx = [names.index(c.lower()) for c in cols]
+            except ValueError:
+                raise XLErr("#REF!", f"column {cols} not in table {table.displayName}") from None
+            ca, cb = (idx[0], idx[-1]) if col_span else (idx[0], idx[0] if len(idx) == 1 else idx[-1])
+            cs, ce = c1 + min(ca, cb), c1 + max(ca, cb)
+        else:
+            cs, ce = c1, c2
+        if re_ < rs:
+            raise XLErr("#REF!")
+        return self.ref(f"'{tsheet}'!{cell_ref(cs, rs)}:{cell_ref(ce, re_)}", sheet)
 
     def _named(self, name: str, sheet: str) -> Range:
         ws = self._ws(sheet)
@@ -511,35 +608,24 @@ class Evaluator:
         if kind == "empty":
             return EMPTY
         if kind == "neg":
-            return -to_num(self.ev(node[1], sheet))
+            v = self.ev(node[1], sheet)
+            if _multi(v):
+                return _map1(v, lambda x: -to_num(x))
+            return -to_num(v)
         if kind == "pct":
-            return to_num(self.ev(node[1], sheet)) / 100
+            v = self.ev(node[1], sheet)
+            if _multi(v):
+                return _map1(v, lambda x: to_num(x) / 100)
+            return to_num(v) / 100
         if kind == "arr":
             return Range([[scalar(self.ev(x, sheet)) for x in row] for row in node[1]])
         if kind == "bin":
             op = node[1]
             a = self.ev(node[2], sheet)
             b = self.ev(node[3], sheet)
-            if op == "&":
-                return to_str(a) + to_str(b)
-            if op in {"=", "<>", "<", ">", "<=", ">="}:
-                return compare(a, b, op)
-            x, y = to_num(a), to_num(b)
-            if op == "+":
-                return _clean(x + y)
-            if op == "-":
-                return _clean(x - y)
-            if op == "*":
-                return _clean(x * y)
-            if op == "/":
-                if y == 0:
-                    raise XLErr("#DIV/0!")
-                return _clean(x / y)
-            if op == "^":
-                try:
-                    return _clean(x**y)
-                except (OverflowError, ZeroDivisionError, ValueError):
-                    raise XLErr("#NUM!") from None
+            if _multi(a) or _multi(b):
+                return _broadcast(a, b, lambda x, y: _binop(op, x, y))
+            return _binop(op, a, b)
         if kind == "fn":
             name, args = node[1], node[2]
             fn = FUNCTIONS.get(name)
@@ -548,6 +634,61 @@ class Evaluator:
                 raise XLErr("#NAME?", f"function {name} is not supported by the built-in evaluator")
             return fn(self, args, sheet)
         raise XLErr("#VALUE!")
+
+
+def _multi(v: Any) -> bool:
+    return isinstance(v, Range) and (v.rows > 1 or v.cols > 1)
+
+
+def _cellwise(f, *xs: Any) -> Any:
+    try:
+        return f(*xs)
+    except XLErr as e:
+        return e.code
+
+
+def _map1(r: Range, f) -> Range:
+    return Range([[_cellwise(f, x) for x in row] for row in r.grid])
+
+
+def _broadcast(a: Any, b: Any, f) -> Range:
+    ga = a.grid if isinstance(a, Range) else [[a]]
+    gb = b.grid if isinstance(b, Range) else [[b]]
+    rows = max(len(ga), len(gb))
+    cols = max(len(ga[0]) if ga else 0, len(gb[0]) if gb else 0)
+
+    def pick(g: list[list[Any]], r: int, c: int) -> Any:
+        rr = 0 if len(g) == 1 else r
+        cc = 0 if len(g[0]) == 1 else c
+        if rr >= len(g) or cc >= len(g[0]):
+            return "#N/A"
+        return g[rr][cc]
+
+    return Range([[_cellwise(f, pick(ga, r, c), pick(gb, r, c)) for c in range(cols)] for r in range(rows)])
+
+
+def _binop(op: str, a: Any, b: Any) -> Any:
+    if op == "&":
+        return to_str(a) + to_str(b)
+    if op in {"=", "<>", "<", ">", "<=", ">="}:
+        return compare(a, b, op)
+    x, y = to_num(a), to_num(b)
+    if op == "+":
+        return _clean(x + y)
+    if op == "-":
+        return _clean(x - y)
+    if op == "*":
+        return _clean(x * y)
+    if op == "/":
+        if y == 0:
+            raise XLErr("#DIV/0!")
+        return _clean(x / y)
+    if op == "^":
+        try:
+            return _clean(x**y)
+        except (OverflowError, ZeroDivisionError, ValueError):
+            raise XLErr("#NUM!") from None
+    raise XLErr("#VALUE!")
 
 
 def _clean(v: float | int) -> float | int:
@@ -829,7 +970,18 @@ def _floor(x, s=1):
 def _if(ev, args, sheet):
     if not args or len(args) > 3:
         raise XLErr("#VALUE!", "IF needs 1-3 arguments")
-    cond = to_bool(ev.ev(args[0], sheet))
+    cv = ev.ev(args[0], sheet)
+    if _multi(cv):
+        yes = ev.ev(args[1], sheet) if len(args) > 1 and args[1] != ("empty",) else True
+        no = ev.ev(args[2], sheet) if len(args) > 2 else False
+        no = 0 if no is EMPTY else no
+
+        def pick(c: Any, y: Any, n: Any) -> Any:
+            return y if to_bool(c) else n
+
+        cond_y = _broadcast(cv, yes, lambda c, y: (c, y))
+        return _broadcast(cond_y, no, lambda cy, n: pick(cy[0], cy[1], n))
+    cond = to_bool(cv)
     if cond:
         return (
             ev.ev(args[1], sheet)
@@ -1333,3 +1485,551 @@ def _xlookup(needle, look, ret, if_missing=EMPTY, match_mode=0):
     if ret.cols == 1 or (look.cols == 1 and ret.rows == len(vals)):
         return ret.grid[i][0] if ret.cols == 1 else Range([list(ret.grid[i])])
     return ret.grid[0][i] if ret.rows == 1 else Range([[g[i]] for g in ret.grid])
+
+
+# ================================================================== v0.2 additions
+def _grid(v: Any) -> list[list[Any]]:
+    if isinstance(v, Range):
+        return [list(r) for r in v.grid]
+    if v is EMPTY:
+        return [[None]]
+    return [[v]]
+
+
+def _rng(grid: list[list[Any]]) -> Range:
+    if not grid or not grid[0]:
+        raise XLErr("#CALC!", "empty array")
+    return Range(grid)
+
+
+def _sortkey(v: Any) -> tuple[int, Any]:
+    if v is None:
+        return (3, 0)
+    if isinstance(v, bool):
+        return (2, v)
+    if isinstance(v, str):
+        return (1, v.lower())
+    if isinstance(v, (dt.date, dt.time)):
+        return (0, to_num(v))
+    return (0, v)
+
+
+@fn("LET", lazy=True)
+def _let(ev, args, sheet):
+    if len(args) < 3 or len(args) % 2 == 0:
+        raise XLErr("#VALUE!", "LET needs name, value pairs and a final expression")
+    scope: dict[str, Any] = {}
+    ev.scopes.append(scope)
+    try:
+        for i in range(0, len(args) - 1, 2):
+            n = args[i]
+            if n[0] != "ref":
+                raise XLErr("#NAME?", "LET names must be plain identifiers")
+            scope[n[1].lower()] = ev.ev(args[i + 1], sheet)
+        return ev.ev(args[-1], sheet)
+    finally:
+        ev.scopes.pop()
+
+
+@fn("SWITCH", lazy=True)
+def _switch(ev, args, sheet):
+    target = scalar(ev.ev(args[0], sheet))
+    rest = args[1:]
+    for i in range(0, len(rest) - 1, 2):
+        if compare(target, ev.ev(rest[i], sheet), "="):
+            return ev.ev(rest[i + 1], sheet)
+    if len(rest) % 2 == 1:
+        return ev.ev(rest[-1], sheet)
+    raise XLErr("#N/A")
+
+
+# ---- dynamic arrays
+@fn("FILTER")
+def _filter(arr, include, if_empty=EMPTY):
+    g, inc = _grid(arr), _grid(include)
+    if len(inc) == len(g) and len(inc[0]) == 1:
+        out = [row for row, (m,) in zip(g, inc) if to_bool(m)]
+    elif len(inc) == 1 and len(inc[0]) == len(g[0]):
+        keep = [to_bool(m) for m in inc[0]]
+        out = [[v for v, k in zip(row, keep) if k] for row in g]
+        out = out if out and out[0] else []
+    else:
+        raise XLErr("#VALUE!", "FILTER include must match the array's rows or columns")
+    if not out:
+        if if_empty is not EMPTY:
+            return if_empty
+        raise XLErr("#CALC!", "FILTER returned no rows")
+    return Range(out)
+
+
+@fn("UNIQUE")
+def _unique(arr, by_col=False, exactly_once=False):
+    g = _grid(arr)
+    by_col = to_bool(by_col) if by_col is not EMPTY else False
+    once = to_bool(exactly_once) if exactly_once is not EMPTY else False
+    items = [list(c) for c in zip(*g)] if by_col else g
+    keys: dict[tuple[Any, ...], int] = {}
+    order: list[list[Any]] = []
+    for it in items:
+        k = tuple(x.lower() if isinstance(x, str) else x for x in it)
+        if k not in keys:
+            keys[k] = 0
+            order.append(it)
+        keys[k] += 1
+    if once:
+        order = [it for it in order if keys[tuple(x.lower() if isinstance(x, str) else x for x in it)] == 1]
+    if not order:
+        raise XLErr("#CALC!")
+    return _rng([list(c) for c in zip(*order)] if by_col else order)
+
+
+@fn("SORT")
+def _sort(arr, sort_index=1, sort_order=1, by_col=False):
+    g = _grid(arr)
+    idx = int(to_num(sort_index)) if sort_index is not EMPTY else 1
+    desc = (int(to_num(sort_order)) if sort_order is not EMPTY else 1) == -1
+    by_col = to_bool(by_col) if by_col is not EMPTY else False
+    items = [list(c) for c in zip(*g)] if by_col else g
+    if idx < 1 or idx > len(items[0]):
+        raise XLErr("#VALUE!")
+    items = sorted(items, key=lambda r: _sortkey(r[idx - 1]), reverse=desc)
+    return _rng([list(c) for c in zip(*items)] if by_col else items)
+
+
+@fn("SORTBY")
+def _sortby(arr, *pairs):
+    g = _grid(arr)
+    keys = []
+    for i in range(0, len(pairs), 2):
+        by = [r[0] for r in _grid(pairs[i])] if len(_grid(pairs[i])[0]) == 1 else _grid(pairs[i])[0]
+        order = int(to_num(pairs[i + 1])) if i + 1 < len(pairs) and pairs[i + 1] is not EMPTY else 1
+        if len(by) != len(g):
+            raise XLErr("#VALUE!")
+        keys.append((by, order))
+    idx = list(range(len(g)))
+    for by, order in reversed(keys):
+        idx.sort(key=lambda i, by=by: _sortkey(by[i]), reverse=order == -1)
+    return _rng([g[i] for i in idx])
+
+
+@fn("SEQUENCE")
+def _sequence(rows, cols=1, start=1, step=1):
+    r = int(to_num(rows))
+    c = int(to_num(cols)) if cols is not EMPTY else 1
+    st = to_num(start) if start is not EMPTY else 1
+    sp = to_num(step) if step is not EMPTY else 1
+    if r < 1 or c < 1 or r * c > 1_000_000:
+        raise XLErr("#VALUE!")
+    return Range([[_clean(st + (i * c + j) * sp) for j in range(c)] for i in range(r)])
+
+
+@fn("TRANSPOSE")
+def _transpose(arr):
+    return _rng([list(c) for c in zip(*_grid(arr))])
+
+
+@fn("VSTACK")
+def _vstack(*arrs):
+    gs = [_grid(a) for a in arrs]
+    w = max(len(g[0]) for g in gs)
+    return _rng([row + ["#N/A"] * (w - len(row)) for g in gs for row in g])
+
+
+@fn("HSTACK")
+def _hstack(*arrs):
+    gs = [_grid(a) for a in arrs]
+    h = max(len(g) for g in gs)
+    out = [[] for _ in range(h)]
+    for g in gs:
+        for i in range(h):
+            out[i].extend(g[i] if i < len(g) else ["#N/A"] * len(g[0]))
+    return _rng(out)
+
+
+@fn("TAKE")
+def _take(arr, rows=EMPTY, cols=EMPTY):
+    g = _grid(arr)
+    if rows is not EMPTY:
+        n = int(to_num(rows))
+        g = g[:n] if n >= 0 else g[n:]
+    if cols is not EMPTY:
+        n = int(to_num(cols))
+        g = [r[:n] if n >= 0 else r[n:] for r in g]
+    return _rng(g)
+
+
+@fn("DROP")
+def _drop(arr, rows=EMPTY, cols=EMPTY):
+    g = _grid(arr)
+    if rows is not EMPTY:
+        n = int(to_num(rows))
+        g = g[n:] if n >= 0 else g[:n]
+    if cols is not EMPTY:
+        n = int(to_num(cols))
+        g = [r[n:] if n >= 0 else r[:n] for r in g]
+    return _rng(g)
+
+
+@fn("CHOOSECOLS")
+def _choosecols(arr, *idx):
+    g = _grid(arr)
+    w = len(g[0])
+    cols = [int(to_num(i)) for i in idx]
+    if any(c == 0 or abs(c) > w for c in cols):
+        raise XLErr("#VALUE!")
+    return _rng([[r[c - 1 if c > 0 else c] for c in cols] for r in g])
+
+
+@fn("CHOOSEROWS")
+def _chooserows(arr, *idx):
+    g = _grid(arr)
+    rows = [int(to_num(i)) for i in idx]
+    if any(r == 0 or abs(r) > len(g) for r in rows):
+        raise XLErr("#VALUE!")
+    return _rng([g[r - 1 if r > 0 else r] for r in rows])
+
+
+# ---- text
+@fn("TEXTBEFORE")
+def _textbefore(text, delim, instance=1):
+    t, d = to_str(text), to_str(delim)
+    n = int(to_num(instance)) if instance is not EMPTY else 1
+    parts = t.split(d)
+    if len(parts) <= abs(n):
+        raise XLErr("#N/A")
+    return d.join(parts[:n]) if n > 0 else d.join(parts[: len(parts) + n])
+
+
+@fn("TEXTAFTER")
+def _textafter(text, delim, instance=1):
+    t, d = to_str(text), to_str(delim)
+    n = int(to_num(instance)) if instance is not EMPTY else 1
+    parts = t.split(d)
+    if len(parts) <= abs(n):
+        raise XLErr("#N/A")
+    return d.join(parts[n:]) if n > 0 else d.join(parts[len(parts) + n :])
+
+
+@fn("TEXTSPLIT")
+def _textsplit(text, col_delim, row_delim=EMPTY, ignore_empty=False):
+    t = to_str(text)
+    cd = to_str(col_delim) if col_delim is not EMPTY else None
+    rows = t.split(to_str(row_delim)) if row_delim is not EMPTY and to_str(row_delim) else [t]
+    ign = to_bool(ignore_empty) if ignore_empty is not EMPTY else False
+    grid = [[x for x in (r.split(cd) if cd else [r]) if not (ign and x == "")] for r in rows]
+    w = max(len(r) for r in grid)
+    return _rng([r + ["#N/A"] * (w - len(r)) for r in grid])
+
+
+@fn("CHAR", "UNICHAR")
+def _char(n):
+    return chr(int(to_num(n)))
+
+
+@fn("CODE", "UNICODE")
+def _code(s):
+    t = to_str(s)
+    if not t:
+        raise XLErr("#VALUE!")
+    return ord(t[0])
+
+
+@fn("CLEAN")
+def _cleanfn(s):
+    return "".join(ch for ch in to_str(s) if ord(ch) >= 32)
+
+
+@fn("NUMBERVALUE")
+def _numbervalue(s, dec=".", grp=","):
+    t = to_str(s).strip().replace(to_str(grp) if grp is not EMPTY else ",", "")
+    if dec is not EMPTY and to_str(dec) != ".":
+        t = t.replace(to_str(dec), ".")
+    return to_num(t)
+
+
+@fn("FIXED")
+def _fixed(n, decimals=2, no_commas=False):
+    d = int(to_num(decimals)) if decimals is not EMPTY else 2
+    x = _round_half_away(to_num(n), d)
+    nc = to_bool(no_commas) if no_commas is not EMPTY else False
+    return f"{x:.{max(d, 0)}f}" if nc else f"{x:,.{max(d, 0)}f}"
+
+
+@fn("T")
+def _t(v):
+    v = scalar(v)
+    return v if isinstance(v, str) else ""
+
+
+@fn("N")
+def _n(v):
+    v = scalar(v)
+    if isinstance(v, bool):
+        return int(v)
+    return v if isinstance(v, (int, float)) else (to_num(v) if isinstance(v, (dt.date, dt.time)) else 0)
+
+
+# ---- financial
+def _fin(args: tuple[Any, ...], i: int, default: float = 0.0) -> float:
+    return default if len(args) <= i or args[i] is EMPTY else to_num(args[i])
+
+
+@fn("PMT")
+def _pmt(*a):
+    r, n, pv, fv, typ = _fin(a, 0), _fin(a, 1), _fin(a, 2), _fin(a, 3), _fin(a, 4)
+    if n == 0:
+        raise XLErr("#NUM!")
+    if r == 0:
+        return -(pv + fv) / n
+    f = (1 + r) ** n
+    return -(r * (fv + pv * f)) / ((1 + r * typ) * (f - 1))
+
+
+@fn("FV")
+def _fv(*a):
+    r, n, pmt, pv, typ = _fin(a, 0), _fin(a, 1), _fin(a, 2), _fin(a, 3), _fin(a, 4)
+    if r == 0:
+        return -(pv + pmt * n)
+    f = (1 + r) ** n
+    return -(pv * f + pmt * (1 + r * typ) * (f - 1) / r)
+
+
+@fn("PV")
+def _pv(*a):
+    r, n, pmt, fv, typ = _fin(a, 0), _fin(a, 1), _fin(a, 2), _fin(a, 3), _fin(a, 4)
+    if r == 0:
+        return -(fv + pmt * n)
+    f = (1 + r) ** n
+    return -(fv + pmt * (1 + r * typ) * (f - 1) / r) / f
+
+
+@fn("NPER")
+def _nper(*a):
+    r, pmt, pv, fv, typ = _fin(a, 0), _fin(a, 1), _fin(a, 2), _fin(a, 3), _fin(a, 4)
+    if r == 0:
+        if pmt == 0:
+            raise XLErr("#NUM!")
+        return -(pv + fv) / pmt
+    try:
+        return math.log((pmt * (1 + r * typ) - fv * r) / (pmt * (1 + r * typ) + pv * r)) / math.log(1 + r)
+    except (ValueError, ZeroDivisionError):
+        raise XLErr("#NUM!") from None
+
+
+@fn("RATE")
+def _rate(*a):
+    n, pmt, pv, fv, typ = _fin(a, 0), _fin(a, 1), _fin(a, 2), _fin(a, 3), _fin(a, 4)
+    r = _fin(a, 5, 0.1)
+
+    def f(x: float) -> float:
+        if abs(x) < 1e-12:
+            return pv + pmt * n + fv
+        g = (1 + x) ** n
+        return pv * g + pmt * (1 + x * typ) * (g - 1) / x + fv
+
+    for _ in range(100):
+        y = f(r)
+        d = (f(r + 1e-7) - y) / 1e-7
+        if d == 0:
+            break
+        nr = r - y / d
+        if abs(nr - r) < 1e-10:
+            return nr
+        r = nr
+    raise XLErr("#NUM!")
+
+
+@fn("NPV")
+def _npv(rate, *vals):
+    r = to_num(rate)
+    return _clean(math.fsum(v / (1 + r) ** (i + 1) for i, v in enumerate(_nums(vals))))
+
+
+@fn("IRR")
+def _irr(values, guess=0.1):
+    cf = _nums([values])
+    if not any(v > 0 for v in cf) or not any(v < 0 for v in cf):
+        raise XLErr("#NUM!")
+    r = to_num(guess) if guess is not EMPTY else 0.1
+    for _ in range(200):
+        f = sum(v / (1 + r) ** i for i, v in enumerate(cf))
+        d = sum(-i * v / (1 + r) ** (i + 1) for i, v in enumerate(cf))
+        if d == 0:
+            break
+        nr = r - f / d
+        if abs(nr - r) < 1e-10:
+            return nr
+        r = nr
+    lo, hi = -0.9999, 10.0  # bisection fallback
+    for _ in range(300):
+        mid = (lo + hi) / 2
+        f = sum(v / (1 + mid) ** i for i, v in enumerate(cf))
+        flo = sum(v / (1 + lo) ** i for i, v in enumerate(cf))
+        if (f > 0) == (flo > 0):
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2
+
+
+# ---- dates
+@fn("EOMONTH")
+def _eomonth(v, months):
+    import calendar
+
+    d, m = _date(v), int(to_num(months))
+    y, mo = d.year + (d.month - 1 + m) // 12, (d.month - 1 + m) % 12 + 1
+    return dt.datetime(y, mo, calendar.monthrange(y, mo)[1])
+
+
+@fn("WEEKDAY")
+def _weekday(v, typ=1):
+    wd = _date(v).weekday()  # Mon=0
+    t = int(to_num(typ)) if typ is not EMPTY else 1
+    if t == 1:
+        return (wd + 1) % 7 + 1
+    if t in (2, 11):
+        return wd + 1
+    if t == 3:
+        return wd
+    raise XLErr("#NUM!")
+
+
+@fn("WEEKNUM")
+def _weeknum(v, typ=1):
+    d = _date(v)
+    jan1 = dt.datetime(d.year, 1, 1)
+    t = int(to_num(typ)) if typ is not EMPTY else 1
+    off = (jan1.weekday() + 1) % 7 if t == 1 else jan1.weekday()
+    return ((d - jan1).days + off) // 7 + 1
+
+
+@fn("ISOWEEKNUM")
+def _isoweeknum(v):
+    return _date(v).isocalendar()[1]
+
+
+def _holidays(h: Any) -> set[dt.date]:
+    if h is EMPTY or h is None:
+        return set()
+    return {_date(x).date() for x in _flat([h]) if x is not None}
+
+
+@fn("NETWORKDAYS")
+def _networkdays(start, end, holidays=EMPTY):
+    a, b = _date(start).date(), _date(end).date()
+    sign = 1
+    if b < a:
+        a, b, sign = b, a, -1
+    hol = _holidays(holidays)
+    n = sum(
+        1
+        for i in range((b - a).days + 1)
+        if (a + dt.timedelta(i)).weekday() < 5 and (a + dt.timedelta(i)) not in hol
+    )
+    return sign * n
+
+
+@fn("WORKDAY")
+def _workday(start, days, holidays=EMPTY):
+    d = _date(start).date()
+    n = int(to_num(days))
+    step = 1 if n >= 0 else -1
+    hol = _holidays(holidays)
+    while n:
+        d += dt.timedelta(step)
+        if d.weekday() < 5 and d not in hol:
+            n -= step
+    return dt.datetime(d.year, d.month, d.day)
+
+
+@fn("DATEDIF")
+def _datedif(start, end, unit):
+    a, b, u = _date(start), _date(end), to_str(unit).upper()
+    if b < a:
+        raise XLErr("#NUM!")
+    months = (b.year - a.year) * 12 + b.month - a.month - (1 if b.day < a.day else 0)
+    if u == "Y":
+        return months // 12
+    if u == "M":
+        return months
+    if u == "D":
+        return (b - a).days
+    if u == "YM":
+        return months % 12
+    if u == "MD":
+        prev = b.replace(day=1) - dt.timedelta(days=1)
+        return b.day - a.day if b.day >= a.day else (prev.day - a.day + b.day if prev.day >= a.day else b.day)
+    if u == "YD":
+        try:
+            aa = a.replace(year=b.year)
+        except ValueError:
+            aa = a.replace(year=b.year, day=28)
+        if aa > b:
+            aa = aa.replace(year=b.year - 1)
+        return (b - aa).days
+    raise XLErr("#NUM!")
+
+
+def _time_of(v: Any) -> dt.time:
+    v = scalar(v)
+    if isinstance(v, dt.datetime):
+        return v.time()
+    if isinstance(v, dt.time):
+        return v
+    x = to_num(v) % 1
+    secs = round(x * 86400)
+    return dt.time(secs // 3600 % 24, secs // 60 % 60, secs % 60)
+
+
+@fn("HOUR")
+def _hour(v):
+    return _time_of(v).hour
+
+
+@fn("MINUTE")
+def _minute(v):
+    return _time_of(v).minute
+
+
+@fn("SECOND")
+def _second(v):
+    return _time_of(v).second
+
+
+@fn("TIME")
+def _timefn(h, m, s):
+    secs = int(to_num(h)) * 3600 + int(to_num(m)) * 60 + int(to_num(s))
+    secs %= 86400
+    return dt.time(secs // 3600, secs // 60 % 60, secs % 60)
+
+
+@fn("DATEVALUE")
+def _datevalue(s):
+    t = to_str(s).strip()
+    for f in (
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%d/%m/%Y",
+        "%m/%d/%Y",
+        "%d-%b-%Y",
+        "%d %B %Y",
+        "%B %d, %Y",
+        "%b %d, %Y",
+    ):
+        try:
+            return dt.datetime.strptime(t, f)
+        except ValueError:
+            continue
+    try:
+        return dt.datetime.fromisoformat(t)
+    except ValueError:
+        raise XLErr("#VALUE!", f"cannot parse date '{t}'") from None
+
+
+@fn("COUNTUNIQUE_")  # internal helper not exposed by Excel; kept out of docs
+def _cu(*a):
+    return len({v for v in _flat(a) if v is not None})
+
+
+del FUNCTIONS["COUNTUNIQUE_"]

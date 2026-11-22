@@ -17,15 +17,18 @@ from sheetmcp_core import Config, SheetError, Sheets, __version__
 
 log = logging.getLogger("sheetmcp")
 
-INSTRUCTIONS = """SheetMCP works with Excel (.xlsx/.xlsm), CSV/TSV, Parquet and JSON files.
+INSTRUCTIONS = """SheetMCP works with Excel (.xlsx/.xlsm, plus read-only .xls/.ods/.html tables), CSV/TSV,
+Parquet and JSON files. Paths are relative to the first allowed root.
 Workflow tips:
-1. list_files to discover files, then describe to see sheets, columns and types.
+1. Start with quick_look (a folder or a file): structure, columns, stats, data issues and next steps in one call.
 2. read_range shows values AND formulas side by side; use offset for paging.
-3. For analysis use query (DuckDB SQL). Files in the root folder are tables by name:
-   sales.csv -> sales, book.xlsx -> book (first sheet) or book__<sheet>. Or FROM 'path/file.xlsx#Sheet'.
-4. Writes keep existing formatting/formulas and make a backup; use dry_run=true to preview.
-5. Outputs are row-limited; pass output='file.xlsx' to save full results instead of printing them.
-Paths are relative to the first allowed root."""
+3. For questions use query (DuckDB SQL). query() with no sql lists every table name. Files in the root are
+   tables by name: sales.csv -> sales, book.xlsx -> book (first sheet) or book__<sheet>; or FROM 'dir/f.xlsx#Sheet'.
+4. clean fixes messy data (trim, dedupe, to_number, to_date, fill_down, split...); preview first, then output=.
+5. build_report makes a formatted Excel report (summary + totals + chart + data) in one call.
+6. Writes keep formatting/formulas and make a backup: backups(action='undo', path=...) reverts the last change.
+   Use dry_run=true to preview. batch runs many steps in one call.
+7. Outputs are row-limited; pass output='file.xlsx' to save full results instead of printing them."""
 
 RO = ToolAnnotations(readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False)
 WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=False, idempotentHint=False, openWorldHint=False)
@@ -106,7 +109,8 @@ def build_server(config: Config | None = None, host: str = "127.0.0.1", port: in
         ] = None,
         limit: Annotated[int, Field(description="Max files to list.")] = 500,
     ) -> dict:
-        """List spreadsheet/data files (xlsx, xlsm, csv, tsv, parquet, json/jsonl) in a folder, with size, date and sheet names."""
+        """List spreadsheet/data files (xlsx, xlsm, xls, ods, html, csv, tsv, parquet, json/jsonl) in a folder, with
+        size, date and sheet names. For columns and stats too, use quick_look."""
         return S.list_files(path, recursive, pattern, limit)
 
     @tool(RO)
@@ -176,10 +180,36 @@ def build_server(config: Config | None = None, host: str = "127.0.0.1", port: in
         ] = True,
         create: Annotated[bool, Field(description="Create the file/sheet if missing.")] = True,
         dry_run: DryRun = False,
+        fill_formula: Annotated[
+            str | None,
+            Field(
+                description="Formula for the FIRST cell of fill_range, e.g. '=B2*C2'; copied down/right with "
+                "relative references adjusted (like dragging the fill handle)."
+            ),
+        ] = None,
+        fill_range: Annotated[
+            str | None,
+            Field(
+                description="Where fill_formula goes, e.g. 'D2:D100', or 'D2:D' / 'D2' = down to the last used row."
+            ),
+        ] = None,
     ) -> dict:
-        """Write values and formulas into an xlsx (or csv). Only cell values change; existing formatting, other
-        formulas, charts and sheets are preserved. A backup of the old file is made automatically."""
-        return S.write_range(path, sheet, start_cell, values, cells, append, parse_dates, create, dry_run)
+        """Write values and formulas into an xlsx (or csv), or fill a formula down a column. Only cell values change;
+        existing formatting, other formulas, charts and sheets are preserved. A backup is made automatically
+        (undo with backups). Appending rows to a CSV streams, so it is fast even for huge files."""
+        return S.write_range(
+            path,
+            sheet,
+            start_cell,
+            values,
+            cells,
+            append,
+            parse_dates,
+            create,
+            dry_run,
+            fill_formula,
+            fill_range,
+        )
 
     @tool(DESTRUCTIVE, write=True)
     def manage_sheets(
@@ -222,12 +252,12 @@ def build_server(config: Config | None = None, host: str = "127.0.0.1", port: in
     @tool(RO)
     def query(
         sql: Annotated[
-            str,
+            str | None,
             Field(
-                description="One DuckDB SELECT. Tables: files in the root by name (sales.csv -> sales; "
+                description="One DuckDB SELECT (leave empty to list every table name and its columns). Tables: files in the root by name (sales.csv -> sales; "
                 "book.xlsx -> book / book__sheetname), tables= aliases, or FROM 'dir/file.xlsx#Sheet'."
             ),
-        ],
+        ] = None,
         tables: Annotated[
             dict[str, str] | list[str] | None,
             Field(
@@ -244,8 +274,9 @@ def build_server(config: Config | None = None, host: str = "127.0.0.1", port: in
         output_sheet: OutSheet = None,
         format: Fmt = "json",
     ) -> dict:
-        """Run SQL across one or MANY spreadsheet files at once (joins, aggregates, window functions, CTEs) with
-        DuckDB. Read-only SELECT; use `output` to save results to a new file."""
+        """Answer questions with SQL across one or MANY spreadsheet files at once (joins, aggregates, window
+        functions, CTEs, PIVOT) using DuckDB. Read-only SELECT. Call without sql to see which tables exist.
+        Use `output` (+ output_sheet) to save results to a new file or a new sheet."""
         return S.query(sql, tables, folder, limit, offset, output, output_sheet, format)
 
     @tool(RO)
@@ -363,7 +394,9 @@ def build_server(config: Config | None = None, host: str = "127.0.0.1", port: in
 
     @tool(WRITE, write=True)
     def convert(
-        input: Annotated[str, Field(description="Source file (xlsx/csv/tsv/parquet/json/jsonl).")],
+        input: Annotated[
+            str, Field(description="Source file (xlsx/xls/ods/html/csv/tsv/parquet/json/jsonl).")
+        ],
         output: Annotated[
             str,
             Field(
@@ -375,9 +408,17 @@ def build_server(config: Config | None = None, host: str = "127.0.0.1", port: in
             bool,
             Field(description="xlsx input: convert every sheet (one file per sheet, or sheets of one xlsx)."),
         ] = False,
+        csv_dialect: Annotated[
+            Literal["standard", "excel", "google_sheets"],
+            Field(
+                description="CSV output flavour: excel adds a UTF-8 BOM (accents open correctly in Excel); "
+                "google_sheets uses ISO dates for clean import."
+            ),
+        ] = "standard",
     ) -> dict:
-        """Convert between Excel, CSV, TSV, Parquet, JSON, JSON Lines and Markdown. Fast (DuckDB), streams big files."""
-        return S.convert(input, output, sheet, all_sheets)
+        """Convert between Excel, legacy .xls/.ods, HTML tables, CSV, TSV, Parquet, JSON, JSON Lines and Markdown.
+        Fast (DuckDB) and streams big files. Also exports Excel- or Google-Sheets-friendly CSV."""
+        return S.convert(input, output, sheet, all_sheets, None, csv_dialect)
 
     # ================================================================= analysis
     @tool(RO)
@@ -390,7 +431,8 @@ def build_server(config: Config | None = None, host: str = "127.0.0.1", port: in
         top_values: Annotated[int, Field(description="Most frequent values to show per column.")] = 5,
     ) -> dict:
         """Data profile + quality report: per-column type, nulls, distinct, min/max/mean/quartiles, top values, and
-        issues like duplicate rows, numbers stored as text, stray whitespace, empty/constant columns and outliers."""
+        issues like duplicate rows, numbers stored as text, stray whitespace, empty/constant columns, outliers,
+        inconsistent category spellings and anomalies (with row numbers)."""
         return S.profile(source, sheet, columns, top_values)
 
     @tool(RO)
@@ -603,6 +645,188 @@ def build_server(config: Config | None = None, host: str = "127.0.0.1", port: in
             dry_run,
         )
 
+    # ================================================================= power tools (v0.2)
+    @tool(RO)
+    def quick_look(
+        path: Annotated[str, Field(description="A folder (default: the root) or a file.")] = ".",
+        sheet: Sheet_ = None,
+    ) -> dict:
+        """The best first call. For a folder: every data file with sheets, row counts, columns and the SQL table name
+        to use. For a file: sheets, column types and stats, data-quality score and issues, formula errors,
+        a preview and suggested next steps. One call instead of list_files + describe + profile."""
+        return S.quick_look(path, sheet)
+
+    @tool(RO)
+    def clean(
+        source: Source,
+        operations: Annotated[
+            list[dict[str, Any]],
+            Field(
+                description="Steps applied in order. Each is {'op': ..., options}. Ops: "
+                "trim {columns?, collapse_spaces?} | case {mode: upper|lower|title, columns?} | "
+                "replace {find, replace, columns?, regex?, whole_cell?} | split {column, sep, into: [names]} | "
+                "merge {columns, into, sep} | fill_down {columns} | fill_null {columns, value} | "
+                "to_number {columns, decimal?: '.'|','} | to_date {columns, format?, dayfirst?} | "
+                "drop_empty_rows | dedupe {columns?, keep?: first|last} | drop_columns {columns} | "
+                "keep_columns {columns} | rename {mapping} | filter {where} | sort {order_by} | "
+                "add_column {name, expr}. Text ops default to all text columns."
+            ),
+        ],
+        sheet: Sheet_ = None,
+        output: Annotated[
+            str | None,
+            Field(
+                description="Save the cleaned table here. The SAME xlsx file cleans the sheet in place (styles, "
+                "tables and other sheets kept; backup made). Omit to preview."
+            ),
+        ] = None,
+        output_sheet: OutSheet = None,
+        limit: Limit = None,
+        format: Fmt = "json",
+    ) -> dict:
+        """Fix messy data without writing code: trim spaces, fix case, find/replace, split/merge columns, fill down
+        blanks (merged-cell exports), numbers stored as text, mixed date formats, empty rows and duplicates.
+        Previews by default; pass output to save."""
+        return S.clean(source, operations, sheet, output, output_sheet, limit, format)
+
+    @tool(WRITE, write=True)
+    def manage_objects(
+        path: Path_,
+        action: Annotated[
+            Literal[
+                "list",
+                "table_create",
+                "table_delete",
+                "name_create",
+                "name_delete",
+                "validation_delete",
+                "conditional_delete",
+            ],
+            Field(
+                description="list shows Excel tables, named ranges, data validations and conditional formats."
+            ),
+        ] = "list",
+        sheet: Sheet_ = None,
+        name: Annotated[
+            str | None, Field(description="Table or name to create/delete, e.g. 'SalesData'.")
+        ] = None,
+        range: Annotated[
+            str | None,
+            Field(
+                description="Range for table_create (with header row), name_create, or rule deletion scope."
+            ),
+        ] = None,
+        refers_to: Annotated[
+            str | None, Field(description="name_create: a reference 'Sheet1!$B$2:$B$9' or constant '=0.15'.")
+        ] = None,
+        style: Annotated[str, Field(description="Excel table style.")] = "TableStyleMedium9",
+        dry_run: DryRun = False,
+    ) -> dict:
+        """Manage Excel structure objects: turn a range into a formatted Excel Table (usable as Table[Column] in
+        formulas), create/delete named ranges and constants, list or remove data validation and conditional
+        formatting rules."""
+        return S.manage_objects(path, action, sheet, name, range, refers_to, style, dry_run)
+
+    @tool(DESTRUCTIVE, write=True)
+    def backups(
+        path: Annotated[
+            str | None, Field(description="File (or folder) whose backups to use. Default: all.")
+        ] = None,
+        action: Annotated[
+            Literal["list", "undo", "restore", "delete"],
+            Field(
+                description="undo = revert the file's latest change; restore = put back a specific backup."
+            ),
+        ] = "list",
+        backup: Annotated[
+            str | None, Field(description="Backup path from action='list' (restore/delete).")
+        ] = None,
+        limit: Annotated[int, Field(description="Max backups to list.")] = 50,
+    ) -> dict:
+        """Undo mistakes. Every write keeps a timestamped backup; list them, undo the last change to a file, or
+        restore any version. An undo itself is reversible (the replaced state is kept as a snapshot)."""
+        return S.backups(path, action, backup, limit)
+
+    @tool(DESTRUCTIVE)
+    def batch(
+        operations: Annotated[
+            list[dict[str, Any]],
+            Field(
+                description="Up to 100 steps: [{'tool': 'write_range', 'args': {...}}, {'tool': "
+                "'format_range', 'args': {...}}]. Any SheetMCP tool except batch/server_info."
+            ),
+        ],
+        stop_on_error: Annotated[bool, Field(description="Stop at the first failing step.")] = True,
+    ) -> dict:
+        """Run many SheetMCP operations in one call (e.g. write data, format header, add chart) and get every
+        result back. Saves round trips for multi-step edits."""
+        if cfg.read_only:
+            ro = {
+                "list_files",
+                "describe",
+                "read_range",
+                "query",
+                "profile",
+                "formulas",
+                "search",
+                "diff",
+                "quick_look",
+                "catalog",
+                "transform",
+                "aggregate",
+                "combine",
+                "clean",
+            }
+            for op in operations:
+                if (op.get("tool") or op.get("op")) not in ro:
+                    raise ToolError("Server is read-only; batch may only contain read tools.")
+        return S.batch(operations, stop_on_error)
+
+    @tool(WRITE, write=True)
+    def build_report(
+        source: Source,
+        output: Annotated[str, Field(description="Report file to create, e.g. 'sales_report.xlsx'.")],
+        group_by: Annotated[list[str], Field(description="Summary rows, e.g. ['Region'].")],
+        metrics: Annotated[
+            list[str],
+            Field(description="e.g. ['Revenue:sum', 'Units:avg', 'count'] (same syntax as aggregate)."),
+        ],
+        sheet: Sheet_ = None,
+        where: Annotated[str | None, Field(description='Optional SQL filter, e.g. "Year = 2024".')] = None,
+        title: Annotated[str | None, Field(description="Report / chart title.")] = None,
+        chart_type: Annotated[
+            Literal["column", "bar", "line", "pie", "area", "none"], Field(description="Summary chart.")
+        ] = "column",
+        include_data: Annotated[
+            bool, Field(description="Add a 'Data' sheet with the (filtered) rows.")
+        ] = True,
+        number_format: Annotated[
+            str,
+            Field(description="Number format for metrics, e.g. '#,##0.00' or '[$৳-845]#,##0.00' for BDT."),
+        ] = "#,##0.00",
+        top: Annotated[int | None, Field(description="Only the top N groups (by the first metric).")] = None,
+        overwrite: Annotated[
+            bool, Field(description="Replace an existing report (a backup is kept).")
+        ] = False,
+    ) -> dict:
+        """Create a finished Excel report in one call: a Summary sheet (grouped metrics sorted by the first metric,
+        a live-formula totals row, styled header, number formats, frozen header, chart) plus a filterable Data
+        sheet."""
+        return S.build_report(
+            source,
+            output,
+            group_by,
+            metrics,
+            sheet,
+            where,
+            title,
+            chart_type,
+            include_data,
+            number_format,
+            overwrite,
+            top,
+        )
+
     # ================================================================= resources
     @mcp.resource(
         "sheet://info",
@@ -670,8 +894,8 @@ def build_server(config: Config | None = None, host: str = "127.0.0.1", port: in
     def analyze_spreadsheet(path: str, question: str = "") -> str:
         return (
             f"Analyze the file '{path}'.\n"
-            "1. Call describe to learn its sheets, columns and types.\n"
-            "2. Call profile on the main table to get statistics and data-quality issues.\n"
+            "1. Call quick_look to learn its sheets, columns, types, statistics and data-quality issues.\n"
+            "2. If needed, call profile on other sheets.\n"
             "3. Use query (SQL) or aggregate to compute the key totals, trends and top/bottom items.\n"
             "4. If it has formulas, run formulas(action='errors').\n"
             "Then write a concise report: what the data is, key numbers, notable patterns, data problems, and next steps."
@@ -682,9 +906,9 @@ def build_server(config: Config | None = None, host: str = "127.0.0.1", port: in
     def clean_data(path: str, output: str = "") -> str:
         out = output or "a new file next to the original with a _clean suffix"
         return (
-            f"Clean the data in '{path}'. First run profile and list every issue found. Propose fixes (trim whitespace, "
-            "remove duplicates, fix numbers stored as text, standardise dates/categories). After I agree, apply them with "
-            f"transform or query and save the result to {out} (never overwrite the original)."
+            f"Clean the data in '{path}'. First run quick_look and list every issue found. Propose fixes (trim "
+            "whitespace, remove duplicates, fix numbers stored as text, standardise dates/categories, fill down blanks). "
+            f"Preview them with the clean tool, and after I agree save the result to {out} (never overwrite the original)."
         )
 
     @mcp.prompt(name="audit_formulas", description="Audit an Excel model's formulas for errors and risks.")
@@ -707,13 +931,13 @@ def build_server(config: Config | None = None, host: str = "127.0.0.1", port: in
         name="build_report",
         description="Turn raw data into a formatted Excel report with a summary and chart.",
     )
-    def build_report(source: str, output: str = "report.xlsx", goal: str = "") -> str:
+    def report_prompt(source: str, output: str = "report.xlsx", goal: str = "") -> str:
         return (
             f"Build an Excel report from '{source}' into '{output}'.\n"
-            "1. describe + profile the data. 2. Use aggregate/query to create a summary table, saving it with "
-            f"output='{output}', output_sheet='Summary'. 3. Save the detailed data to output_sheet='Data'. "
-            "4. format_range: bold header with fill, number formats, autofit, freeze panes A2. 5. add_chart on the Summary sheet. "
-            "6. Describe what the report shows." + (f"\nGoal: {goal}" if goal else "")
+            "1. quick_look the data to pick sensible group-by columns and metrics. 2. Call build_report "
+            f"(output='{output}'). 3. If more is needed, add sheets with aggregate(output=..., output_sheet=...), "
+            "format_range and add_chart. 4. Describe what the report shows."
+            + (f"\nGoal: {goal}" if goal else "")
         )
 
     return mcp

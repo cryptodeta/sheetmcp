@@ -13,13 +13,16 @@ import duckdb
 from .base import Base
 from .errors import SheetError
 from .fileio import (
+    LEGACY_KINDS,
     TABULAR_EXT,
     coerce_text,
     file_kind,
     get_sheet,
     has_formulas,
+    legacy_sheet,
     load_workbook,
     read_csv_grid,
+    sheet_names,
     xlsx_sheet_names,
 )
 from .util import cell_ref, qident
@@ -69,6 +72,11 @@ class AnalysisOps(Base):
             }
             if item["kind"] == "excel":
                 item["sheets"] = xlsx_sheet_names(f)
+            elif item["kind"] in LEGACY_KINDS:
+                try:
+                    item["sheets"] = sheet_names(f)
+                except SheetError as e:
+                    item["error"] = e.message
             files.append(item)
         res: dict[str, Any] = {"root": str(root), "count": total, "files": files}
         if total > len(files):
@@ -109,7 +117,22 @@ class AnalysisOps(Base):
             scanned += 1
             kind = file_kind(f)
             try:
-                if kind == "excel":
+                if kind in LEGACY_KINDS:
+                    for n in sheet_names(f):
+                        for r, row in enumerate(legacy_sheet(f, n)[1], start=1):
+                            for c, v in enumerate(row, start=1):
+                                if v is not None and rx.search(str(v)):
+                                    total += 1
+                                    if len(hits) < limit:
+                                        hits.append(
+                                            {
+                                                "file": self.sb.display(f),
+                                                "sheet": n,
+                                                "cell": cell_ref(c, r),
+                                                "value": self._j(v),
+                                            }
+                                        )
+                elif kind == "excel":
                     wbv = load_workbook(f, formulas=False, read_only=True, fresh=True)
                     wbf = (
                         load_workbook(f, formulas=True, read_only=True, fresh=True)
@@ -256,6 +279,13 @@ class AnalysisOps(Base):
                         f = cf.value if isinstance(cf.value, str) and cf.value.startswith("=") else None
                         cells[(cf.row, cf.column)] = (cv.value, f)
             return wsf.title, cells
+        if kind in LEGACY_KINDS:
+            title, grid = legacy_sheet(p, sheet)
+            for r, row in enumerate(grid, start=1):
+                for c, v in enumerate(row, start=1):
+                    if v is not None and v != "":
+                        cells[(r, c)] = (v, None)
+            return title, cells
         if kind in ("csv", "tsv"):
             for r, row in enumerate(read_csv_grid(p), start=1):
                 for c, v in enumerate(row, start=1):

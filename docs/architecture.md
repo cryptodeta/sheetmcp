@@ -5,19 +5,22 @@
             │                         MCP (stdio or streamable HTTP)                        │
             └───────────────────────────────────────┬───────────────────────────────────────┘
                                                     │
-packages/server  sheetmcp ─ FastMCP: 18 tools, resources, prompts, error → ToolError mapping
+packages/server  sheetmcp ─ FastMCP: 24 tools, resources, prompts, error → ToolError mapping
                                                     │  (thin: no logic, just schemas + calls)
 packages/core    sheetmcp_core.Sheets  (facade made of mixins)
                  ├─ workbook.py   describe / read_range / write_range / manage_sheets / insert_delete
                  ├─ sqlops.py     query / transform / aggregate / combine / convert / profile (DuckDB)
                  ├─ formulaops.py list / errors / trace / evaluate / stats
-                 ├─ evaluator.py  dependency-free Excel formula evaluator (~100 functions)
+                 ├─ evaluator.py  dependency-free Excel formula evaluator (143 functions, arrays, Table[Col])
                  ├─ refshift.py   re-points references after row/column insert/delete
                  ├─ formatops.py  styles, conditional formatting, validation, charts
                  ├─ analysis.py   list_files / search / diff
+                 ├─ power.py      quick_look / catalog / clean / manage_objects / backups / batch / build_report
+                 ├─ legacy.py     read-only .xls (optional xlrd), .ods and HTML table readers
                  ├─ fileio.py     type detection, workbook LRU cache, atomic save + backups, xlsx→csv cache
                  ├─ paths.py      sandbox (allowed roots, did-you-mean)
                  └─ config.py     env/CLI configuration
+packages/server  setup_cmd.py ─ `sheetmcp install / uninstall / doctor`
 packages/cli     sheetcli ─ argparse wrapper over the same facade
 ```
 
@@ -39,3 +42,10 @@ packages/cli     sheetcli ─ argparse wrapper over the same facade
   with `next_offset`. Long strings are truncated. `output=` writes full results to disk instead.
 * **Performance.** LRU cache of parsed workbooks (keyed by mtime), raw-XML scan to skip formula parsing on
   formula-free files, fast sheet listing from `workbook.xml`, read-only streaming for files > 8 MB.
+* **Clean pipelines in SQL.** `clean` turns each step into a DuckDB temp view over the previous one, with a hidden
+  row number column so `fill_down`, `dedupe keep=last` and `sort` stay deterministic. Nothing is materialised
+  until the final write.
+* **Legacy formats without heavy dependencies.** `.ods` (zip + XML) and HTML tables are parsed with the standard
+  library; `.xls` uses `xlrd` only if installed. Sheets are converted to the same CSV cache used for xlsx.
+* **Undo.** Backups are timestamped with microseconds; `backups(action="undo")` restores the newest one, consumes
+  it (so repeated undos walk back in time) and keeps the replaced state as a `-undo` snapshot.

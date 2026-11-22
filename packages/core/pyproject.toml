@@ -1,6 +1,6 @@
 [project]
 name = "sheetmcp-core"
-version = "0.1.0"
+version = "0.2.0"
 description = "Fast, lightweight spreadsheet engine (Excel/CSV/Parquet/JSON) powering SheetMCP. No MCP dependency."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -13,6 +13,9 @@ classifiers = [
   "Topic :: Office/Business :: Financial :: Spreadsheet",
 ]
 dependencies = ["openpyxl>=3.1", "duckdb>=1.1"]
+
+[project.optional-dependencies]
+xls = ["xlrd>=2.0.1"]
 
 [build-system]
 requires = ["hatchling>=1.25"]

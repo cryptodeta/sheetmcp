@@ -1,12 +1,17 @@
 # SheetMCP
 
 **The Excel / CSV MCP server that actually works.** Read formulas *and* values, run SQL across a whole
-folder of spreadsheets, write safely without breaking formatting, audit formulas, build formatted reports
-with charts. Pure Python, runs on macOS / Linux / Windows, **no Excel, no API keys, no cloud.**
+folder of spreadsheets, clean messy data, write safely without breaking formatting (with undo), audit
+formulas, and build formatted reports with charts in one call. Pure Python, runs on macOS / Linux / Windows,
+**no Excel, no API keys, no cloud.**
 
 ```bash
-uvx sheetmcp ~/Documents/spreadsheets
+pip install ./packages/core ./packages/server   # from a clone of this repo
+sheetmcp install ~/Documents/spreadsheets        # adds SheetMCP to Claude Desktop / Cursor / Windsurf ...
+sheetmcp doctor                                  # checks that everything works
 ```
+
+Then ask your AI: *"Take a quick look at my spreadsheets and tell me what's there."*
 
 ---
 
@@ -15,30 +20,62 @@ uvx sheetmcp ~/Documents/spreadsheets
 | Common complaint about Excel MCPs | SheetMCP |
 | --- | --- |
 | "It only reads values, not formulas" | `read_range` returns values **and** formulas side by side |
-| "Formulas show empty because the file was made by a script" | Built-in evaluator (~100 Excel functions) fills missing values |
+| "Formulas show empty because the file was made by a script" | Built-in evaluator (140+ Excel functions incl. dynamic arrays, LET, financial, `Table[Column]` refs) fills missing values |
 | "Can't work across many CSV/xlsx files" | `query` = DuckDB SQL over every file in a folder, joins included |
 | "Only works on Windows (COM)" | Pure Python: openpyxl + DuckDB, works everywhere |
-| "60 tools, the model gets confused" | 18 focused tools with clear schemas |
+| "60 tools, the model gets confused" | 24 focused tools with plain-language descriptions; `quick_look` is the one obvious first call |
+| "Setup is JSON-file fiddling" | `sheetmcp install` writes the config for Claude Desktop, Cursor, VS Code, Windsurf and Claude Code |
+| "My data is messy" | `clean`: trim, case, split/merge, fill down, numbers-as-text, mixed date formats, dedupe, in one call |
+| "The AI broke my file" | Every write is backed up; `backups(action="undo")` reverts it, and undo is itself undoable |
+| "Can't open old .xls / LibreOffice files" | `.xls` (optional extra), `.ods` and HTML tables are readable and queryable |
 | "Writes broke my formatting / formulas" | Only cell values change, formatting/charts/tables preserved, auto-backup, `dry_run` |
-| "Inserting a row broke all formulas" | `insert_delete` re-points formulas across all sheets, like Excel |
+| "Inserting a row broke all formulas" | `insert_delete` re-points formulas, names, tables, conditional formats and validations, like Excel |
 | "Huge output blew up the context" | Row limits, paging (`next_offset`), `output=` saves full results to a file |
 | "Cryptic errors" | Every error says what went wrong **and how to fix it** (with did-you-mean) |
 | "Needs an API key / account" | None. Local files only, sandboxed to folders you choose |
 
 ## 1-minute quickstart
 
-1. Install [uv](https://docs.astral.sh/uv/) (`curl -LsSf https://astral.sh/uv/install.sh | sh`, or `pip install uv`).
-2. Add SheetMCP to your AI app (pick one below). Replace the folder with yours.
-3. Ask: *"List my spreadsheets and summarise sales by region"*.
+SheetMCP is not on PyPI yet, so install it from this repository (or the release zip):
+
+```bash
+git clone https://github.com/cryptodeta/sheetmcp && cd sheetmcp
+pip install ./packages/core ./packages/server          # add ./packages/cli for the `sheetcli` tool
+# optional: legacy .xls support
+pip install xlrd
+```
+
+(With [uv](https://docs.astral.sh/uv/): `uv sync` and prefix commands with `uv run`.)
+
+### Easiest: `sheetmcp install`
+
+```bash
+sheetmcp install ~/Documents/spreadsheets                 # every AI app found on this computer
+sheetmcp install . --client cursor --client vscode        # pick apps (claude-desktop, cursor, vscode, windsurf, claude-code, all)
+sheetmcp install ~/data --read-only                       # no write tools
+sheetmcp install ~/data --dry-run                         # show what would change
+sheetmcp install ~/data --print                           # just print the JSON snippet
+sheetmcp uninstall                                        # remove it again
+sheetmcp doctor                                           # versions, sandbox self-test, folders, configured apps
+```
+
+`install` merges into existing config files (other servers are kept, the old file is backed up), uses the
+current Python interpreter, and works on Windows, macOS and Linux. VS Code and Claude Code configs are written
+to the project folder (`.vscode/mcp.json`, `.mcp.json`). Restart / reload the app afterwards.
 
 Try it without an AI app:
 
 ```bash
-uvx --from sheetmcp-cli sheetcli --root ./examples/data query "SELECT Region, sum(Revenue) FROM sales GROUP BY 1" --md
+sheetcli --root ./examples/data look
+sheetcli --root ./examples/data query "SELECT Region, sum(Revenue) FROM sales GROUP BY 1" --md
 ```
 
-> Not on PyPI yet? Install from the source tree / zip:
-> `uv tool install ./packages/server` (or `pip install ./packages/core ./packages/server`), then use `sheetmcp` instead of `uvx sheetmcp`.
+### Manual configuration
+
+The snippets below use `uvx sheetmcp`, which works once the package is published or installed as a uv tool
+(`uv tool install ./packages/server`). With a plain `pip install`, use `"command": "sheetmcp"` (or the full
+path of your Python with `"args": ["-m", "sheetmcp", "<folder>"]`). The default folder is the current
+directory when none is given.
 
 ### Claude Desktop
 
@@ -128,28 +165,51 @@ docker run --rm -p 8000:8000 -v "$PWD/data:/data" sheetmcp --transport http --ho
 
 More snippets (read-only mode, multiple folders, env vars) in [`examples/configs/`](examples/configs).
 
-## Tools (18)
+## Tools (24)
+
+**Start here**
 
 | Tool | What it does |
 | --- | --- |
+| `quick_look` | One call: a folder's files with sheets, row counts, columns and SQL table names, or one file's column stats, quality score, issues, formula errors, preview and suggested next steps |
 | `server_info` | Allowed folders, read-only mode, limits, tips |
-| `list_files` | Find xlsx/xlsm/csv/tsv/parquet/json files (with sheet names) |
+| `list_files` | Find xlsx/xlsm/xls/ods/html/csv/tsv/parquet/json files (with sheet names) |
 | `describe` | Sheets, sizes, tables, named ranges, merged cells, formula counts, charts, inferred column types, preview |
+
+**Read & write**
+
+| Tool | What it does |
+| --- | --- |
 | `read_range` | Values **and** formulas side by side, auto-computes uncached formulas, paging, JSON or markdown |
-| `write_range` | Write values/formulas (2D block, single cells, or append rows); preserves formatting; backup; dry-run |
+| `write_range` | Write values/formulas (2D block, single cells, append rows), fill a formula down a column (`fill_formula`); preserves formatting; backup; dry-run; streaming CSV append |
 | `manage_sheets` | Create workbook; add / rename (updates references) / delete / copy / move / hide sheets |
-| `insert_delete` | Insert/delete rows/columns with formula, named range, table and merged-cell references updated |
-| `query` | DuckDB SQL across many files at once: joins, aggregates, window functions, CTEs; save with `output` |
+| `insert_delete` | Insert/delete rows/columns with formulas, named ranges, tables, merged cells, conditional formats, validations and filters updated |
+| `manage_objects` | Excel Tables (create/delete, usable as `Table[Column]`), named ranges and constants, list/remove data validation and conditional formatting |
+| `backups` | List backups, `undo` the last change to a file, `restore` any version, delete |
+| `batch` | Run up to 100 operations in one call |
+
+**Analyse & transform**
+
+| Tool | What it does |
+| --- | --- |
+| `query` | DuckDB SQL across many files at once: joins, aggregates, window functions, CTEs; no `sql` = list every table; save with `output` (new file or new sheet) |
 | `transform` | Filter / select / rename / sort / distinct / dedupe without writing SQL |
 | `aggregate` | Group-by summaries and pivot tables |
 | `combine` | Append (aligns columns by name) or join several files/sheets |
-| `convert` | xlsx ⇄ csv ⇄ tsv ⇄ parquet ⇄ json ⇄ jsonl → markdown; all sheets at once |
-| `profile` | Column stats + data-quality issues (duplicates, numbers-as-text, whitespace, outliers, empty/constant columns) |
+| `clean` | Cleaning pipeline: trim, case, find/replace (regex), split, merge, fill down, fill blanks, to_number, to_date (mixed formats), drop empty rows, dedupe, drop/keep/rename columns, filter, sort, computed columns; preview, save, or clean a sheet in place |
+| `convert` | xlsx / xls / ods / html ⇄ csv ⇄ tsv ⇄ parquet ⇄ json ⇄ jsonl → markdown; all sheets at once; Excel- and Google-Sheets-friendly CSV |
+| `profile` | Column stats + data-quality issues (duplicates, numbers-as-text, whitespace, outliers, inconsistent category spellings, anomalies with row numbers, empty/constant columns) |
 | `formulas` | `list`, `errors` (#REF!, #DIV/0!, #N/A, circular), `trace` precedents/dependents, `evaluate`, `stats` |
 | `search` | Find text/regex in every cell (and formula) of every file in a folder |
 | `diff` | Compare files/sheets cell-by-cell (incl. formulas) or row-level by key columns |
+
+**Format & report**
+
+| Tool | What it does |
+| --- | --- |
 | `format_range` | Fonts, fills, number formats (incl. ৳ BDT, $, €), borders, widths/autofit, freeze panes, merge, filters, conditional formatting, dropdown validation |
 | `add_chart` | Native Excel charts: column, bar, line, pie, scatter, area |
+| `build_report` | One call: Summary sheet (grouped metrics, live-formula totals row, styled header, number format, chart) + filterable Data sheet |
 
 Plus **resources** (`sheet://files`, `sheet://describe/{path}`, `sheet://preview/{path}/{sheet}`, one per file)
 and **prompts** (`analyze_spreadsheet`, `clean_data`, `audit_formulas`, `compare_files`, `build_report`).
@@ -171,7 +231,31 @@ GROUP BY ALL ORDER BY revenue DESC
 * `book.xlsx` → `book` (first sheet), `book__<sheet>` for other sheets (lower-case, non-alphanumerics → `_`).
 * Any path: `SELECT * FROM 'reports/2024/q1.xlsx#Summary'`.
 * Explicit aliases: `tables={"s": "data/sales.xlsx#2024"}`.
+* Don't know the names? Call `query` with no SQL, or `quick_look`, to list every table and its columns.
+* `.xls`, `.ods` and HTML files work too: `budget.ods` → `budget` / `budget__<sheet>`, each HTML `<table>` is a sheet.
 * Only `SELECT` is allowed; DuckDB file access is locked to your folders.
+
+### Cleaning data
+
+```json
+{"source": "raw/customers.csv",
+ "operations": [{"op": "trim"}, {"op": "dedupe"},
+                {"op": "to_number", "columns": ["CreditLimit"]},
+                {"op": "to_date", "columns": ["Joined"], "dayfirst": true},
+                {"op": "fill_down", "columns": ["Region"]}],
+ "output": "clean/customers.xlsx"}
+```
+
+Without `output` you get a preview. Passing the same `.xlsx` as `output` cleans that sheet in place (styles,
+tables and other sheets are kept, and a backup is made).
+
+### Formulas
+
+The evaluator computes formulas that have no cached value (files written by scripts) with 140+ functions:
+math/stats, lookup (XLOOKUP, INDEX/MATCH...), text (TEXTBEFORE/AFTER, TEXTSPLIT...), dates (EOMONTH,
+NETWORKDAYS, WORKDAY, DATEDIF...), financial (PMT, FV, PV, NPER, RATE, NPV, IRR), logic (LET, SWITCH, IFS),
+dynamic arrays (FILTER, UNIQUE, SORT, SORTBY, SEQUENCE, VSTACK, HSTACK, TAKE, DROP, CHOOSECOLS...), array
+math like `SUM(B2:B9*C2:C9)`, and structured references (`Sales[Qty]`, `[@Price]`, `Sales[#Totals]`).
 
 ## Configuration
 
@@ -195,7 +279,7 @@ GROUP BY ALL ORDER BY revenue DESC
 * **Read-only mode** hides every write tool.
 * **Dry run** on every write tool shows exactly which cells would change.
 * **Automatic backups** (`.sheetmcp_backups/<name>.<timestamp>.xlsx`) and atomic saves (write temp → rename),
-  so a crash never leaves a half-written file.
+  so a crash never leaves a half-written file. `backups(action="undo")` reverts the latest change.
 
 ## Python library & CLI
 
@@ -206,6 +290,10 @@ s = Sheets(Config(roots=["./data"]))
 s.read_range("sales.xlsx", "Summary", "A1:C6")  # values + formulas
 s.query("SELECT * FROM sales WHERE Units > 30", output="big_orders.xlsx")
 s.formulas("model.xlsx", "errors")
+s.quick_look(".")  # overview of the folder
+s.clean("raw.csv", [{"op": "trim"}, {"op": "dedupe"}], output="clean.xlsx")
+s.build_report("sales.xlsx", "report.xlsx", group_by=["Region"], metrics=["Revenue:sum", "count"])
+s.backups("sales.xlsx", "undo")
 ```
 
 ```bash
@@ -213,6 +301,10 @@ sheetcli ls data/
 sheetcli describe data/sales.xlsx
 sheetcli formulas data/sales.xlsx errors
 sheetcli diff v1.xlsx v2.xlsx
+sheetcli look data/
+sheetcli clean data/raw.csv trim dedupe to_number:Amount -o data/clean.xlsx
+sheetcli report data/sales.xlsx report.xlsx -g Region -m Revenue:sum -m count
+sheetcli backups data/sales.xlsx --undo
 ```
 
 ## Performance (laptop-class VM, Python 3.13)
@@ -225,7 +317,8 @@ sheetcli diff v1.xlsx v2.xlsx
 | Profile 500k-row CSV | ~1 s |
 | CSV → Parquet (500k rows) | ~0.2 s |
 
-xlsx files above 8 MB are streamed (openpyxl read-only mode). Core dependencies: **openpyxl + duckdb** only.
+xlsx files above 8 MB are streamed (openpyxl read-only mode); appending rows to a CSV streams without
+rewriting the file. Core dependencies: **openpyxl + duckdb** only (`xlrd` optional for `.xls`).
 
 ## Repository layout
 
@@ -242,7 +335,7 @@ tests/            pytest suite (fixtures generated on the fly)
 
 ```bash
 uv sync                 # create .venv with all workspace packages + dev tools
-uv run pytest           # 112 tests
+uv run pytest           # 199 tests
 uv run ruff check . && uv run ruff format --check .
 uv run sheetmcp examples/data                     # run the server
 npx @modelcontextprotocol/inspector uv run sheetmcp examples/data   # inspect interactively
@@ -252,11 +345,16 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). License: [MIT](LICENSE).
 
 ## Known limitations
 
-* Legacy `.xls` and `.ods` are not supported (clear error with a conversion hint). Password-protected files can't be opened.
+* Not published to PyPI yet: install from this repository (see Quickstart). `uvx sheetmcp` works only after
+  `uv tool install ./packages/server` or a future PyPI release.
+* `.xls`, `.ods` and HTML are **read-only** inputs (convert to `.xlsx` to edit). `.xls` needs the optional `xlrd`
+  package (`pip install xlrd`, or the `xls` extra). Password-protected files can't be opened.
 * openpyxl preserves most content but drops some exotic objects on save (shapes, form controls, some chart styling,
   slicers, external-data connections). Pivot tables are kept but not refreshed.
-* The formula evaluator covers ~100 common functions; others (e.g. dynamic arrays like FILTER/UNIQUE, financial
-  functions) return `#NAME?` and are reported. Excel's own cached values are always preferred when present.
-* `insert_delete` updates formulas, named ranges, tables and merged cells; conditional-formatting and data-validation
-  ranges are not shifted.
-* Structured references (`Table1[Column]`) are read and preserved but not evaluated.
+* The formula evaluator covers 140+ functions; others (e.g. LAMBDA/MAP, cube and web functions) return `#NAME?`
+  and are reported. Excel's own cached values are always preferred when present. External workbook links are
+  not evaluated.
+* Cleaning a sheet in place replaces formula cells inside the cleaned table with their values (reported in the
+  response; undo with `backups`).
+* `sheetmcp install` writes configs that point at the Python interpreter it runs from; re-run it if you move or
+  recreate that environment.

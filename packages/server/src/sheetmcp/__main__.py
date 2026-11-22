@@ -1,4 +1,10 @@
-"""Command line entry point: `sheetmcp [ROOT ...] [--read-only] [--transport stdio|http]`."""
+"""Command line entry point.
+
+sheetmcp [ROOT ...] [--read-only] [--transport stdio|http]   run the MCP server
+sheetmcp install [ROOT ...] [--client cursor ...]            add SheetMCP to your AI apps
+sheetmcp uninstall                                           remove it again
+sheetmcp doctor                                              check that everything works
+"""
 
 from __future__ import annotations
 
@@ -14,6 +20,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     ap = argparse.ArgumentParser(
         prog="sheetmcp",
         description="SheetMCP: Excel/CSV/Parquet MCP server. Formulas, SQL across files, safe writes. No API keys.",
+        epilog="Other commands: sheetmcp install | uninstall | doctor  (add -h for help)",
     )
     ap.add_argument(
         "roots", nargs="*", help="Folder(s) the server may access (default: $SHEETMCP_ROOTS or current dir)."
@@ -36,6 +43,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> None:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] in ("install", "init", "uninstall", "doctor"):
+        from .setup_cmd import COMMANDS
+
+        sys.exit(COMMANDS[argv[0]](argv[1:]))
     args = parse_args(argv)
     logging.basicConfig(
         level=args.log_level.upper(), stream=sys.stderr, format="%(levelname)s sheetmcp: %(message)s"

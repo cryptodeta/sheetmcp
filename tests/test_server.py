@@ -12,6 +12,12 @@ from sheetmcp import build_server
 from sheetmcp_core import Config
 
 EXPECTED_TOOLS = {
+    "quick_look",
+    "clean",
+    "manage_objects",
+    "backups",
+    "batch",
+    "build_report",
     "server_info",
     "list_files",
     "describe",
@@ -31,7 +37,17 @@ EXPECTED_TOOLS = {
     "format_range",
     "add_chart",
 }
-WRITE_TOOLS = {"write_range", "manage_sheets", "insert_delete", "convert", "format_range", "add_chart"}
+WRITE_TOOLS = {
+    "write_range",
+    "manage_sheets",
+    "insert_delete",
+    "convert",
+    "format_range",
+    "add_chart",
+    "manage_objects",
+    "backups",
+    "build_report",
+}
 
 
 def _payload(result):
@@ -64,7 +80,7 @@ async def test_in_memory_tools_resources_prompts(data_dir: Path):
             p.name for p in prompts.prompts
         }
         p = await client.get_prompt("analyze_spreadsheet", {"path": "sales.xlsx"})
-        assert "describe" in p.messages[0].content.text
+        assert "quick_look" in p.messages[0].content.text
 
 
 @pytest.mark.anyio
@@ -136,3 +152,50 @@ async def test_streamable_http(data_dir: Path):
     finally:
         proc.terminate()
         await proc.wait()
+
+
+@pytest.mark.anyio
+async def test_new_tools_over_mcp(data_dir: Path):
+    server = build_server(Config(roots=[str(data_dir)]))
+    async with create_connected_server_and_client_session(server._mcp_server) as client:
+        r = await client.call_tool("quick_look", {})
+        assert not r.isError and _payload(r)["file_count"] >= 7
+        r = await client.call_tool("query", {})
+        assert not r.isError and any(t["table"] == "sales" for t in _payload(r)["tables"])
+        r = await client.call_tool(
+            "build_report",
+            {
+                "source": "sales.xlsx",
+                "output": "rep.xlsx",
+                "group_by": ["Region"],
+                "metrics": ["Revenue:sum"],
+            },
+        )
+        assert not r.isError and _payload(r)["summary_rows"] == 4
+        r = await client.call_tool("clean", {"source": "customers.csv", "operations": [{"op": "dedupe"}]})
+        assert not r.isError and _payload(r)["rows_after"] == 12
+        r = await client.call_tool(
+            "batch",
+            {
+                "operations": [
+                    {"tool": "write_range", "args": {"path": "customers.csv", "cells": {"A2": "Q"}}}
+                ]
+            },
+        )
+        assert not r.isError and _payload(r)["succeeded"] == 1
+        r = await client.call_tool("backups", {"path": "customers.csv", "action": "undo"})
+        assert not r.isError
+        r = await client.call_tool("manage_objects", {"path": "sales.xlsx"})
+        assert not r.isError and _payload(r)["tables"][0]["name"] == "SalesTable"
+
+
+@pytest.mark.anyio
+async def test_read_only_batch_rejects_writes(data_dir: Path):
+    server = build_server(Config(roots=[str(data_dir)], read_only=True))
+    async with create_connected_server_and_client_session(server._mcp_server) as client:
+        r = await client.call_tool(
+            "batch", {"operations": [{"tool": "write_range", "args": {"path": "x.xlsx", "cells": {"A1": 1}}}]}
+        )
+        assert r.isError and "read-only" in r.content[0].text
+        r = await client.call_tool("batch", {"operations": [{"tool": "quick_look", "args": {}}]})
+        assert not r.isError

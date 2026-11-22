@@ -10,6 +10,7 @@ import datetime as dt
 import json
 import random
 import sys
+import zipfile
 from pathlib import Path
 
 import openpyxl
@@ -131,6 +132,81 @@ def make(target: Path) -> Path:
     return target
 
 
+ODS_CONTENT = """<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+ xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
+ xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0" office:version="1.2">
+<office:body><office:spreadsheet>{tables}</office:spreadsheet></office:body></office:document-content>"""
+
+
+def _ods_cell(v: object) -> str:
+    if v is None:
+        return "<table:table-cell/>"
+    if isinstance(v, dt.date):
+        return (
+            f'<table:table-cell office:value-type="date" office:date-value="{v.isoformat()}">'
+            f"<text:p>{v.isoformat()}</text:p></table:table-cell>"
+        )
+    if isinstance(v, (int, float)):
+        return f'<table:table-cell office:value-type="float" office:value="{v}"><text:p>{v}</text:p></table:table-cell>'
+    t = str(v).replace("&", "&amp;").replace("<", "&lt;")
+    return f'<table:table-cell office:value-type="string"><text:p>{t}</text:p></table:table-cell>'
+
+
+def write_ods(path: Path, sheets: dict[str, list[list[object]]]) -> Path:
+    """Tiny dependency-free .ods writer (enough for samples and tests)."""
+    tables = ""
+    for name, rows in sheets.items():
+        body = "".join(
+            "<table:table-row>" + "".join(_ods_cell(v) for v in r) + "</table:table-row>" for r in rows
+        )
+        tables += f'<table:table table:name="{name}">{body}</table:table>'
+    manifest = (
+        '<?xml version="1.0" encoding="UTF-8"?><manifest:manifest '
+        'xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">'
+        '<manifest:file-entry manifest:full-path="/" '
+        'manifest:media-type="application/vnd.oasis.opendocument.spreadsheet"/>'
+        '<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>'
+        "</manifest:manifest>"
+    )
+    with zipfile.ZipFile(path, "w") as z:
+        z.writestr(zipfile.ZipInfo("mimetype"), "application/vnd.oasis.opendocument.spreadsheet")
+        z.writestr("META-INF/manifest.xml", manifest)
+        z.writestr("content.xml", ODS_CONTENT.format(tables=tables), zipfile.ZIP_DEFLATED)
+    return path
+
+
+def make_extras(target: Path) -> Path:
+    """Extra formats: an OpenDocument spreadsheet and an HTML page with tables."""
+    target.mkdir(parents=True, exist_ok=True)
+    write_ods(
+        target / "budget.ods",
+        {
+            "Budget": [
+                ["Category", "Planned", "Actual", "Month"],
+                ["Rent", 1200, 1200, dt.date(2024, 1, 1)],
+                ["Food", 400, 455.5, dt.date(2024, 1, 1)],
+                ["Travel", 150, None, dt.date(2024, 1, 1)],
+            ],
+            "Notes": [["Note"], ["Imported from LibreOffice"]],
+        },
+    )
+    (target / "prices.html").write_text(
+        """<html><body><h1>Price list</h1>
+<table id="prices"><caption>Prices</caption>
+<tr><th>Item</th><th>Price</th><th>Stock</th></tr>
+<tr><td>Widget</td><td>12.50</td><td>100</td></tr>
+<tr><td>Gadget</td><td>30</td><td>7</td></tr>
+<tr><td colspan="2">Gizmo bundle</td><td>3</td></tr>
+</table>
+<table id="fx"><tr><th>Currency</th><th>Rate</th></tr><tr><td>BDT</td><td>117.5</td></tr></table>
+</body></html>""",
+        encoding="utf-8",
+    )
+    return target
+
+
 if __name__ == "__main__":
     out = make(Path(sys.argv[1]) if len(sys.argv) > 1 else Path(__file__).parent / "data")
+    make_extras(out)
     print(f"sample files written to {out}")

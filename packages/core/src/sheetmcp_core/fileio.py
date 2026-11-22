@@ -11,7 +11,6 @@ import re
 import shutil
 import tempfile
 import threading
-import time
 import zipfile
 from collections import OrderedDict
 from pathlib import Path
@@ -28,7 +27,10 @@ EXCEL_EXT = {".xlsx", ".xlsm", ".xltx", ".xltm"}
 CSV_EXT = {".csv", ".tsv", ".tab", ".txt"}
 PARQUET_EXT = {".parquet", ".pq"}
 JSON_EXT = {".json", ".jsonl", ".ndjson"}
-TABULAR_EXT = EXCEL_EXT | CSV_EXT | PARQUET_EXT | JSON_EXT
+LEGACY_EXT = {".xls", ".ods", ".html", ".htm"}
+TABULAR_EXT = EXCEL_EXT | CSV_EXT | PARQUET_EXT | JSON_EXT | LEGACY_EXT
+SHEETED_KINDS = {"excel", "xls", "ods", "html"}  # kinds with named sheets/tables
+LEGACY_KINDS = {"xls", "ods", "html"}  # read-only importers (see legacy.py)
 OUTPUT_FORMATS = {"csv", "tsv", "xlsx", "parquet", "json", "jsonl", "md"}
 
 
@@ -47,19 +49,44 @@ def file_kind(p: Path) -> str:
     if ext == ".json":
         return "json"
     if ext == ".xls":
-        raise SheetError(
-            f"'{p.name}' is a legacy .xls file, which is not supported.",
-            "Re-save it as .xlsx (Excel/LibreOffice: Save As → .xlsx), or convert with "
-            "`libreoffice --headless --convert-to xlsx file.xls`.",
-        )
+        return "xls"
     if ext == ".ods":
-        raise SheetError(
-            f"'{p.name}' is an OpenDocument sheet (.ods), which is not supported.", "Save it as .xlsx first."
-        )
+        return "ods"
+    if ext in {".html", ".htm"}:
+        return "html"
     raise SheetError(
         f"Unsupported file type '{ext or p.name}'.",
-        "Supported: .xlsx .xlsm .csv .tsv .txt .parquet .json .jsonl",
+        "Supported: .xlsx .xlsm .csv .tsv .txt .parquet .json .jsonl, and read-only .xls .ods .html",
     )
+
+
+def sheet_names(p: Path) -> list[str]:
+    """Sheet (or HTML table) names for any sheeted file kind."""
+    kind = file_kind(p)
+    if kind == "excel":
+        return xlsx_sheet_names(p)
+    if kind in LEGACY_KINDS:
+        from .legacy import read_sheets
+
+        return list(read_sheets(p, kind))
+    return []
+
+
+def legacy_sheet(p: Path, sheet: str | int | None) -> tuple[str, list[list[Any]]]:
+    from .legacy import read_sheets
+
+    data = read_sheets(p, file_kind(p))
+    names = list(data)
+    if sheet is None or sheet == "":
+        return names[0], data[names[0]]
+    if isinstance(sheet, int) or (isinstance(sheet, str) and sheet.isdigit() and sheet not in data):
+        i = int(sheet)
+        if 0 <= i < len(names):
+            return names[i], data[names[i]]
+    for n in names:
+        if n == sheet or n.lower() == str(sheet).lower():
+            return n, data[n]
+    raise SheetError(f"Sheet '{sheet}' does not exist.", "Available: " + ", ".join(names))
 
 
 def output_format(p: Path, fmt: str | None = None) -> str:
@@ -195,15 +222,40 @@ def has_formulas(p: Path) -> bool:
 
 
 # ---------------------------------------------------------------- saving
+_last_stamp = [""]
+
+
+def glob_escape(s: str) -> str:
+    return re.sub(r"([*?\[])", r"[\1]", s)
+
+
+def backup_stamp() -> str:
+    """Sortable, strictly increasing timestamp: YYYYmmdd-HHMMSS-microseconds."""
+    import datetime as _dt
+
+    stamp = _dt.datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    if stamp <= _last_stamp[0]:
+        base, micro = _last_stamp[0].rsplit("-", 1)
+        stamp = f"{base}-{int(micro) + 1:06d}"
+    _last_stamp[0] = stamp
+    return stamp
+
+
 def backup_file(p: Path, cfg: Config) -> str | None:
     if not cfg.backup or not p.exists():
         return None
     bdir = p.parent / ".sheetmcp_backups"
     bdir.mkdir(exist_ok=True)
-    stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 1_000_000:06d}"
-    dest = bdir / f"{p.stem}.{stamp}{p.suffix}"
+    dest = bdir / f"{p.stem}.{backup_stamp()}{p.suffix}"
     shutil.copy2(p, dest)
-    olds = sorted(bdir.glob(f"{p.stem}.*{p.suffix}"), key=lambda x: x.stat().st_mtime)
+    olds = sorted(
+        (
+            f
+            for f in bdir.glob(f"{glob_escape(p.stem)}.*{p.suffix}")
+            if f.name[len(p.stem) + 1 :][:1].isdigit()
+        ),
+        key=lambda x: x.name,
+    )
     for old in olds[: max(0, len(olds) - cfg.max_backups)]:
         with contextlib.suppress(OSError):
             old.unlink()
@@ -306,6 +358,21 @@ def conv_dir() -> Path:
 
 def sheet_rows(p: Path, sheet: str | int | None, header_row: int | None = None):
     """Yield (headers, rows-iterator) of a sheet's cached values, skipping leading blank rows."""
+    if file_kind(p) in LEGACY_KINDS:
+        title, grid = legacy_sheet(p, sheet)
+        start = (header_row or 1) - 1
+        body = grid[start:]
+        while body and not any(v is not None and str(v).strip() != "" for v in body[0]):
+            body = body[1:]
+        if not body:
+            return [], [], title
+        hdr = list(body[0])
+        while hdr and (hdr[-1] is None or str(hdr[-1]).strip() == ""):
+            hdr.pop()
+        w = len(hdr)
+        rows = [list(r[:w]) + [None] * max(0, w - len(r)) for r in body[1:]]
+        rows = [r for r in rows if any(v is not None and v != "" for v in r)]
+        return unique_headers(hdr), rows, title
     wb = load_workbook(p, formulas=False, read_only=True, fresh=True)
     wbf = load_workbook(p, formulas=True, read_only=True, fresh=True) if has_formulas(p) else None
     try:

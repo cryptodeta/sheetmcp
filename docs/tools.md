@@ -10,7 +10,8 @@ _read-only: True, destructive: False_
 
 ## `list_files`
 
-List spreadsheet/data files (xlsx, xlsm, csv, tsv, parquet, json/jsonl) in a folder, with size, date and sheet names.
+List spreadsheet/data files (xlsx, xlsm, xls, ods, html, csv, tsv, parquet, json/jsonl) in a folder, with
+size, date and sheet names. For columns and stats too, use quick_look.
 
 _read-only: True, destructive: False_
 
@@ -55,8 +56,9 @@ _read-only: True, destructive: False_
 
 ## `write_range`
 
-Write values and formulas into an xlsx (or csv). Only cell values change; existing formatting, other
-formulas, charts and sheets are preserved. A backup of the old file is made automatically.
+Write values and formulas into an xlsx (or csv), or fill a formula down a column. Only cell values change;
+existing formatting, other formulas, charts and sheets are preserved. A backup is made automatically
+(undo with backups). Appending rows to a CSV streams, so it is fast even for huge files.
 
 _read-only: False, destructive: False_
 
@@ -71,6 +73,8 @@ _read-only: False, destructive: False_
 | `parse_dates` | boolean |  | `True` | Turn ISO strings like '2024-05-01' into real Excel dates. |
 | `create` | boolean |  | `True` | Create the file/sheet if missing. |
 | `dry_run` | boolean |  | `False` | Preview the change without saving. |
+| `fill_formula` | string \| null |  | `None` | Formula for the FIRST cell of fill_range, e.g. '=B2*C2'; copied down/right with relative references adjusted (like dragging the fill handle). |
+| `fill_range` | string \| null |  | `None` | Where fill_formula goes, e.g. 'D2:D100', or 'D2:D' / 'D2' = down to the last used row. |
 
 ## `manage_sheets`
 
@@ -106,14 +110,15 @@ _read-only: False, destructive: True_
 
 ## `query`
 
-Run SQL across one or MANY spreadsheet files at once (joins, aggregates, window functions, CTEs) with
-DuckDB. Read-only SELECT; use `output` to save results to a new file.
+Answer questions with SQL across one or MANY spreadsheet files at once (joins, aggregates, window
+functions, CTEs, PIVOT) using DuckDB. Read-only SELECT. Call without sql to see which tables exist.
+Use `output` (+ output_sheet) to save results to a new file or a new sheet.
 
 _read-only: True, destructive: False_
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `sql` | string | yes |  | One DuckDB SELECT. Tables: files in the root by name (sales.csv -> sales; book.xlsx -> book / book__sheetname), tables= aliases, or FROM 'dir/file.xlsx#Sheet'. |
+| `sql` | string \| null |  | `None` | One DuckDB SELECT (leave empty to list every table name and its columns). Tables: files in the root by name (sales.csv -> sales; book.xlsx -> book / book__sheetname), tables= aliases, or FROM 'dir/file.xlsx#Sheet'. |
 | `tables` | object \| list[string] \| null |  | `None` | Optional aliases: {'s': 'data/sales.xlsx#2024', 'c': 'crm/customers.csv'}. A list auto-names by file. |
 | `folder` | string \| null |  | `None` | Auto-register every file in this folder by name (default: the root). |
 | `limit` | integer \| null |  | `None` | Max rows to return (default from server config, usually 100). |
@@ -186,21 +191,24 @@ _read-only: True, destructive: False_
 
 ## `convert`
 
-Convert between Excel, CSV, TSV, Parquet, JSON, JSON Lines and Markdown. Fast (DuckDB), streams big files.
+Convert between Excel, legacy .xls/.ods, HTML tables, CSV, TSV, Parquet, JSON, JSON Lines and Markdown.
+Fast (DuckDB) and streams big files. Also exports Excel- or Google-Sheets-friendly CSV.
 
 _read-only: False, destructive: False_
 
 | Parameter | Type | Required | Default | Description |
 | --- | --- | --- | --- | --- |
-| `input` | string | yes |  | Source file (xlsx/csv/tsv/parquet/json/jsonl). |
+| `input` | string | yes |  | Source file (xlsx/xls/ods/html/csv/tsv/parquet/json/jsonl). |
 | `output` | string | yes |  | Target file; format from extension (.xlsx .csv .tsv .parquet .json .jsonl .md). |
 | `sheet` | string \| null |  | `None` | Sheet name (or 0-based index). Default: first sheet. |
 | `all_sheets` | boolean |  | `False` | xlsx input: convert every sheet (one file per sheet, or sheets of one xlsx). |
+| `csv_dialect` | `standard` / `excel` / `google_sheets` |  | `'standard'` | CSV output flavour: excel adds a UTF-8 BOM (accents open correctly in Excel); google_sheets uses ISO dates for clean import. |
 
 ## `profile`
 
 Data profile + quality report: per-column type, nulls, distinct, min/max/mean/quartiles, top values, and
-issues like duplicate rows, numbers stored as text, stray whitespace, empty/constant columns and outliers.
+issues like duplicate rows, numbers stored as text, stray whitespace, empty/constant columns, outliers,
+inconsistent category spellings and anomalies (with row numbers).
 
 _read-only: True, destructive: False_
 
@@ -315,6 +323,105 @@ _read-only: False, destructive: False_
 | `target_sheet` | string \| null |  | `None` | Put the chart on another sheet (e.g. 'Dashboard'). |
 | `stacked` | boolean |  | `False` |  |
 | `dry_run` | boolean |  | `False` | Preview the change without saving. |
+
+## `quick_look`
+
+The best first call. For a folder: every data file with sheets, row counts, columns and the SQL table name
+to use. For a file: sheets, column types and stats, data-quality score and issues, formula errors,
+a preview and suggested next steps. One call instead of list_files + describe + profile.
+
+_read-only: True, destructive: False_
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `path` | string |  | `'.'` | A folder (default: the root) or a file. |
+| `sheet` | string \| null |  | `None` | Sheet name (or 0-based index). Default: first sheet. |
+
+## `clean`
+
+Fix messy data without writing code: trim spaces, fix case, find/replace, split/merge columns, fill down
+blanks (merged-cell exports), numbers stored as text, mixed date formats, empty rows and duplicates.
+Previews by default; pass output to save.
+
+_read-only: True, destructive: False_
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `source` | string | yes |  | Data file; for a specific sheet use 'book.xlsx#Sheet1' or the sheet parameter. |
+| `operations` | list[object] | yes |  | Steps applied in order. Each is {'op': ..., options}. Ops: trim {columns?, collapse_spaces?} \| case {mode: upper\|lower\|title, columns?} \| replace {find, replace, columns?, regex?, whole_cell?} \| split {column, sep, into: [names]} \| merge {columns, into, sep} \| fill_down {columns} \| fill_null {columns, value} \| to_number {columns, decimal?: '.'\|','} \| to_date {columns, format?, dayfirst?} \| drop_empty_rows \| dedupe {columns?, keep?: first\|last} \| drop_columns {columns} \| keep_columns {columns} \| rename {mapping} \| filter {where} \| sort {order_by} \| add_column {name, expr}. Text ops default to all text columns. |
+| `sheet` | string \| null |  | `None` | Sheet name (or 0-based index). Default: first sheet. |
+| `output` | string \| null |  | `None` | Save the cleaned table here. The SAME xlsx file cleans the sheet in place (styles, tables and other sheets kept; backup made). Omit to preview. |
+| `output_sheet` | string \| null |  | `None` | When output is an existing .xlsx: write into this sheet (replaced if it exists), keeping other sheets. |
+| `limit` | integer \| null |  | `None` | Max rows to return (default from server config, usually 100). |
+| `format` | `json` / `records` / `markdown` |  | `'json'` | json = rows as arrays, records = list of objects, markdown = a table. |
+
+## `manage_objects`
+
+Manage Excel structure objects: turn a range into a formatted Excel Table (usable as Table[Column] in
+formulas), create/delete named ranges and constants, list or remove data validation and conditional
+formatting rules.
+
+_read-only: False, destructive: False_
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `path` | string | yes |  | File path, relative to the root folder (or absolute inside it). |
+| `action` | `list` / `table_create` / `table_delete` / `name_create` / `name_delete` / `validation_delete` / `conditional_delete` |  | `'list'` | list shows Excel tables, named ranges, data validations and conditional formats. |
+| `sheet` | string \| null |  | `None` | Sheet name (or 0-based index). Default: first sheet. |
+| `name` | string \| null |  | `None` | Table or name to create/delete, e.g. 'SalesData'. |
+| `range` | string \| null |  | `None` | Range for table_create (with header row), name_create, or rule deletion scope. |
+| `refers_to` | string \| null |  | `None` | name_create: a reference 'Sheet1!$B$2:$B$9' or constant '=0.15'. |
+| `style` | string |  | `'TableStyleMedium9'` | Excel table style. |
+| `dry_run` | boolean |  | `False` | Preview the change without saving. |
+
+## `backups`
+
+Undo mistakes. Every write keeps a timestamped backup; list them, undo the last change to a file, or
+restore any version. An undo itself is reversible (the replaced state is kept as a snapshot).
+
+_read-only: False, destructive: True_
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `path` | string \| null |  | `None` | File (or folder) whose backups to use. Default: all. |
+| `action` | `list` / `undo` / `restore` / `delete` |  | `'list'` | undo = revert the file's latest change; restore = put back a specific backup. |
+| `backup` | string \| null |  | `None` | Backup path from action='list' (restore/delete). |
+| `limit` | integer |  | `50` | Max backups to list. |
+
+## `batch`
+
+Run many SheetMCP operations in one call (e.g. write data, format header, add chart) and get every
+result back. Saves round trips for multi-step edits.
+
+_read-only: False, destructive: True_
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `operations` | list[object] | yes |  | Up to 100 steps: [{'tool': 'write_range', 'args': {...}}, {'tool': 'format_range', 'args': {...}}]. Any SheetMCP tool except batch/server_info. |
+| `stop_on_error` | boolean |  | `True` | Stop at the first failing step. |
+
+## `build_report`
+
+Create a finished Excel report in one call: a Summary sheet (grouped metrics sorted by the first metric,
+a live-formula totals row, styled header, number formats, frozen header, chart) plus a filterable Data
+sheet.
+
+_read-only: False, destructive: False_
+
+| Parameter | Type | Required | Default | Description |
+| --- | --- | --- | --- | --- |
+| `source` | string | yes |  | Data file; for a specific sheet use 'book.xlsx#Sheet1' or the sheet parameter. |
+| `output` | string | yes |  | Report file to create, e.g. 'sales_report.xlsx'. |
+| `group_by` | list[string] | yes |  | Summary rows, e.g. ['Region']. |
+| `metrics` | list[string] | yes |  | e.g. ['Revenue:sum', 'Units:avg', 'count'] (same syntax as aggregate). |
+| `sheet` | string \| null |  | `None` | Sheet name (or 0-based index). Default: first sheet. |
+| `where` | string \| null |  | `None` | Optional SQL filter, e.g. "Year = 2024". |
+| `title` | string \| null |  | `None` | Report / chart title. |
+| `chart_type` | `column` / `bar` / `line` / `pie` / `area` / `none` |  | `'column'` | Summary chart. |
+| `include_data` | boolean |  | `True` | Add a 'Data' sheet with the (filtered) rows. |
+| `number_format` | string |  | `'#,##0.00'` | Number format for metrics, e.g. '#,##0.00' or '[$৳-845]#,##0.00' for BDT. |
+| `top` | integer \| null |  | `None` | Only the top N groups (by the first metric). |
+| `overwrite` | boolean |  | `False` | Replace an existing report (a backup is kept). |
 
 # Resources
 

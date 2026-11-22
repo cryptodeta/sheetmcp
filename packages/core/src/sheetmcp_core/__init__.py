@@ -1,6 +1,6 @@
 """sheetmcp-core: fast, lightweight spreadsheet engine (xlsx / csv / parquet / json)."""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 from .api import Sheets
 from .config import Config

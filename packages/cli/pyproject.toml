@@ -1,12 +1,12 @@
 [project]
 name = "sheetmcp-cli"
-version = "0.1.0"
+version = "0.2.0"
 description = "Tiny command line for SheetMCP's spreadsheet engine (query, convert, profile, diff...)."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 authors = [{ name = "SheetMCP contributors" }]
-dependencies = ["sheetmcp-core==0.1.0"]
+dependencies = ["sheetmcp-core==0.2.0"]
 
 [project.scripts]
 sheetcli = "sheetmcp_cli.main:main"

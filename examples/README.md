@@ -2,7 +2,7 @@
 
 | File | What |
 | --- | --- |
-| `make_samples.py` | Generates `data/` (sales.xlsx with formulas/table/named range, customers.csv with deliberate quality issues, targets.parquet, monthly order CSVs, events.json). Tests use it too. |
+| `make_samples.py` | Generates `data/` (sales.xlsx with formulas/table/named range, customers.csv with deliberate quality issues, targets.parquet, monthly order CSVs, events.json, plus budget.ods and prices.html). Tests use it too. |
 | `data/` | Pre-generated sample files, ready to point the server at: `uv run sheetmcp examples/data` |
 | `python_usage.py` | Use the engine as a Python library |
 | `mcp_client_demo.py` | Connect to the server over stdio with the official MCP client |
@@ -14,3 +14,7 @@ Prompts to try once connected:
 * "Find every formula error in sales.xlsx, explain the cause and fix it (show me a dry run first)."
 * "Combine all orders_*.csv into orders_q1.xlsx, then add a bold header, autofit columns and a column chart."
 * "Profile customers.csv and save a cleaned copy without duplicates and with trimmed names."
+* "Take a quick look at this folder and tell me what's in it."
+* "Build a report from sales.xlsx with revenue by region and a chart, in Taka (৳)."
+* "Undo the last change you made to sales.xlsx."
+* "Read budget.ods and prices.html and compare planned vs actual spending."
