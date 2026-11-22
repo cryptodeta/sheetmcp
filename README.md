@@ -335,7 +335,7 @@ tests/            pytest suite (fixtures generated on the fly)
 
 ```bash
 uv sync                 # create .venv with all workspace packages + dev tools
-uv run pytest           # 199 tests
+uv run pytest           # 200 tests
 uv run ruff check . && uv run ruff format --check .
 uv run sheetmcp examples/data                     # run the server
 npx @modelcontextprotocol/inspector uv run sheetmcp examples/data   # inspect interactively

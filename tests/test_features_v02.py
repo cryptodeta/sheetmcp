@@ -435,3 +435,11 @@ def test_sheetcli_new_commands(data_dir: Path, capsys, monkeypatch):
 def test_info_mentions_new_formats(sheets: Sheets):
     info = Sheets(Config(roots=[str(sheets.sb.roots[0])])).info()
     assert info["version"] == "0.2.0" and "ods" in info["supported_inputs"]
+
+
+def test_csv_cache_has_clean_line_endings(sheets: Sheets, data_dir: Path):
+    from sheetmcp_core.fileio import excel_to_csv_cache
+
+    out, _ = excel_to_csv_cache(data_dir / "sales.xlsx", "Sales")
+    raw = out.read_bytes()
+    assert b"\r\r\n" not in raw and raw.count(b"\r\n") == 41

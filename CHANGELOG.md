@@ -31,7 +31,7 @@ versioning: [SemVer](https://semver.org/).
   PMT, FV, PV, NPER, RATE, NPV, IRR, EOMONTH, WEEKDAY, WEEKNUM, ISOWEEKNUM, NETWORKDAYS, WORKDAY, DATEDIF,
   HOUR, MINUTE, SECOND, TIME, DATEVALUE (143 functions total).
 - `sheetcli look | clean | report | backups`.
-- Sample `.ods` and HTML files (`make_samples.py`), 87 new tests (199 total).
+- Sample `.ods` and HTML files (`make_samples.py`), 88 new tests (200 total).
 
 ### Changed
 - Tool descriptions rewritten in plain language; server instructions point to `quick_look` first.
@@ -39,6 +39,8 @@ versioning: [SemVer](https://semver.org/).
 - English-only documentation.
 
 ### Fixed
+- Windows: the xlsx/ods/html → CSV cache was written with doubled line endings (`\r\r\n`), breaking SQL on
+  Excel files (failing Windows CI since 0.1.0). Cache keys are versioned so old cache files are ignored.
 - Short defined names such as `Ids` or `Tax` were evaluated as whole-column references.
 
 ## [0.1.0] - 2026-11-22

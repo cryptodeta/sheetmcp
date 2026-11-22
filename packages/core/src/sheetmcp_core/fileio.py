@@ -431,7 +431,7 @@ def sheet_rows(p: Path, sheet: str | int | None, header_row: int | None = None):
 def excel_to_csv_cache(p: Path, sheet: str | int | None, header_row: int | None = None) -> tuple[Path, str]:
     """Materialise one sheet as a UTF-8 CSV (cached by mtime) so DuckDB can scan it fast."""
     st = p.stat()
-    key = hashlib.sha1(f"{p}|{st.st_mtime_ns}|{st.st_size}|{sheet}|{header_row}".encode()).hexdigest()[:20]
+    key = hashlib.sha1(f"v2|{p}|{st.st_mtime_ns}|{st.st_size}|{sheet}|{header_row}".encode()).hexdigest()[:20]
     out = conv_dir() / f"{key}.csv"
     meta = conv_dir() / f"{key}.sheet"
     if out.exists() and meta.exists():
@@ -445,7 +445,7 @@ def excel_to_csv_cache(p: Path, sheet: str | int | None, header_row: int | None 
     for r in rows:
         wr.writerow(["" if v is None else jsonable(v) for v in r])
     tmp = out.with_suffix(".tmp")
-    tmp.write_text(buf.getvalue(), encoding="utf-8")
+    tmp.write_text(buf.getvalue(), encoding="utf-8", newline="")  # csv already wrote \r\n; no translation
     os.replace(tmp, out)
     meta.write_text(title, encoding="utf-8")
     return out, title
