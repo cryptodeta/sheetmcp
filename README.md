@@ -365,10 +365,29 @@ Release (wheels and sdists attached) and publishes to PyPI and ghcr.io only when
 than the latest tag; an equal or lower version is a green no-op. Package versions are synced from
 `VERSION.md` automatically (`python scripts/version.py sync` does the same locally).
 
-Maintainer setup for PyPI (either one): add a trusted publisher on PyPI for each of `sheetmcp-core`,
-`sheetmcp` and `sheetmcp-cli` (owner `cryptodeta`, repository `sheetmcp`, workflow `release.yml`, no
-environment), or add a `PYPI_API_TOKEN` repository secret. Without either, the PyPI step is skipped with a
-warning; ghcr.io uses the built-in `GITHUB_TOKEN`.
+### PyPI trusted publishing (no tokens)
+
+PyPI releases use [trusted publishing](https://docs.pypi.org/trusted-publishers/) (OIDC), so there is no
+API token secret. Before the first upload, add a **pending publisher** on pypi.org
+(**Your account** -> **Publishing** -> **Add a new pending publisher** -> **GitHub**) three times, once per
+project, with these values:
+
+| Field | Value |
+| --- | --- |
+| PyPI Project Name | `sheetmcp-core`, then `sheetmcp`, then `sheetmcp-cli` |
+| Owner | `cryptodeta` |
+| Repository name | `sheetmcp` |
+| Workflow name | `release.yml` |
+| Environment name | `pypi` |
+
+The `pypi` job runs in the `pypi` GitHub environment, which already exists in this repository. Once the
+projects exist, the publishers show up under each project's **Settings** -> **Publishing**.
+
+Bumping `VERSION.md` on `main` then publishes all three packages. To publish a version whose tag already exists
+(for example the current one, or after a failed run), run the `Release` workflow manually with **republish**
+checked (`gh workflow run release.yml -f republish=true`); it uploads the files attached to that GitHub Release
+and never creates a second tag or release. Until the publishers are configured, the PyPI job ends green with a
+warning. ghcr.io uses the built-in `GITHUB_TOKEN` and needs no setup.
 
 ## Known limitations
 
