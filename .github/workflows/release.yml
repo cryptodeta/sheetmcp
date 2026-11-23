@@ -1,0 +1,186 @@
+name: Release
+
+# Runs on every push to main. A release happens only when VERSION.md holds a version
+# strictly greater than the latest v* tag; otherwise the workflow ends green with a skip note.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: ghcr.io/cryptodeta/sheetmcp
+
+jobs:
+  check:
+    name: Check VERSION.md
+    runs-on: ubuntu-latest
+    outputs:
+      release: ${{ steps.check.outputs.release }}
+      version: ${{ steps.check.outputs.version }}
+      prerelease: ${{ steps.check.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - id: check
+        run: python3 scripts/version.py release-check >> "$GITHUB_OUTPUT"
+
+  release:
+    name: Build, tag and GitHub Release
+    needs: check
+    if: needs.check.outputs.release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: "3.12"
+      - name: Sync package versions from VERSION.md
+        run: python3 scripts/version.py sync
+      - run: uv sync --locked
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+      - run: uv run pytest -q
+      - name: Build wheels and sdists
+        run: |
+          rm -rf dist
+          uv build --all-packages --out-dir dist
+          ls -l dist
+      - name: Smoke test wheels
+        run: uvx --no-cache --find-links dist --from "sheetmcp==$VERSION" sheetmcp --version
+      - name: Commit synced versions
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [ -n "$(git status --porcelain --untracked-files=no)" ]; then
+            git commit -am "chore(release): v$VERSION [skip ci]"
+            git push origin HEAD:main || echo "::warning::Could not push the version sync commit to main; the tag still points at it."
+          fi
+      - name: Tag
+        run: |
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "Tag v$VERSION already exists"
+          else
+            git tag -a "v$VERSION" -m "v$VERSION"
+            git push origin "v$VERSION"
+          fi
+      - name: GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 scripts/version.py notes "$VERSION" > release-notes.md
+          cat >> release-notes.md <<NOTES
+
+          ## Install
+
+          - PyPI: \`uvx sheetmcp==$VERSION\` or \`pip install sheetmcp==$VERSION\` (CLI: \`pip install sheetmcp-cli==$VERSION\`)
+          - Docker (GitHub Packages): \`docker pull $IMAGE:$VERSION\`
+          - Wheels and sdists are attached below.
+          NOTES
+          flags=()
+          [ "${{ needs.check.outputs.prerelease }}" = "true" ] && flags+=(--prerelease)
+          if gh release view "v$VERSION" >/dev/null 2>&1; then
+            gh release upload "v$VERSION" dist/* --clobber
+          else
+            gh release create "v$VERSION" dist/* --title "v$VERSION" --notes-file release-notes.md --verify-tag "${flags[@]}"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  pypi:
+    name: Publish to PyPI
+    needs: [check, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Find PyPI credentials
+        id: auth
+        env:
+          PYPI_API_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          if [ -n "$PYPI_API_TOKEN" ]; then
+            echo "mode=token" >> "$GITHUB_OUTPUT"; echo "Using the PYPI_API_TOKEN secret"; exit 0
+          fi
+          # Probe trusted publishing: exchange this job's OIDC token for a PyPI upload token.
+          aud=$(curl -fsS https://pypi.org/_/oidc/audience | jq -r .audience)
+          oidc=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$aud" | jq -r .value)
+          code=$(curl -s -o mint.json -w '%{http_code}' -X POST https://pypi.org/_/oidc/mint-token \
+            -H 'Content-Type: application/json' -d "{\"token\":\"$oidc\"}")
+          rm -f mint.json
+          if [ "$code" = "200" ]; then
+            echo "mode=trusted" >> "$GITHUB_OUTPUT"; echo "Using PyPI trusted publishing"
+          else
+            echo "mode=none" >> "$GITHUB_OUTPUT"
+            msg="PyPI publish skipped: no PYPI_API_TOKEN secret and no trusted publisher for this workflow (HTTP $code). See the Releasing section of README.md."
+            echo "::warning::$msg"; echo "$msg" >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Publish sheetmcp-core, sheetmcp, sheetmcp-cli
+        if: steps.auth.outputs.mode != 'none'
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ steps.auth.outputs.mode == 'token' && secrets.PYPI_API_TOKEN || '' }}
+          attestations: ${{ steps.auth.outputs.mode == 'trusted' }}
+          skip-existing: true
+      - if: steps.auth.outputs.mode != 'none'
+        run: echo "Published https://pypi.org/project/sheetmcp/${{ needs.check.outputs.version }}/" >> "$GITHUB_STEP_SUMMARY"
+
+  docker:
+    name: Publish Docker image to ghcr.io (GitHub Packages)
+    needs: [check, release]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.check.outputs.version }}
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=semver,pattern={{version}},value=v${{ needs.check.outputs.version }}
+            type=semver,pattern={{major}}.{{minor}},value=v${{ needs.check.outputs.version }}
+            type=raw,value=latest,enable=${{ needs.check.outputs.prerelease != 'true' }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - run: echo "Published ${{ env.IMAGE }}:${{ needs.check.outputs.version }}" >> "$GITHUB_STEP_SUMMARY"

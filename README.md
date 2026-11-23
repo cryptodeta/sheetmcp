@@ -36,7 +36,8 @@ Then ask your AI: *"Take a quick look at my spreadsheets and tell me what's ther
 
 ## 1-minute quickstart
 
-SheetMCP is not on PyPI yet, so install it from this repository (or the release zip):
+Install from PyPI (`uvx sheetmcp` / `pip install sheetmcp`, see [Install from a registry](#install-from-a-registry))
+once a release is published there, or from this repository:
 
 ```bash
 git clone https://github.com/cryptodeta/sheetmcp && cd sheetmcp
@@ -331,6 +332,19 @@ docs/             tool reference, architecture
 tests/            pytest suite (fixtures generated on the fly)
 ```
 
+## Install from a registry
+
+Every release is published to two places (see [Releases](https://github.com/cryptodeta/sheetmcp/releases)):
+
+| Registry | Package | Install |
+| --- | --- | --- |
+| PyPI | [`sheetmcp`](https://pypi.org/project/sheetmcp/), [`sheetmcp-core`](https://pypi.org/project/sheetmcp-core/), [`sheetmcp-cli`](https://pypi.org/project/sheetmcp-cli/) | `uvx sheetmcp` or `pip install sheetmcp` (`pip install sheetmcp-cli` for `sheetcli`) |
+| GitHub Packages (ghcr.io) | [`ghcr.io/cryptodeta/sheetmcp`](https://github.com/cryptodeta/sheetmcp/pkgs/container/sheetmcp) | `docker pull ghcr.io/cryptodeta/sheetmcp:latest` |
+
+Docker: `docker run -i --rm -v "$PWD:/data" ghcr.io/cryptodeta/sheetmcp` (stdio), or add
+`-p 8000:8000 ... --transport http --host 0.0.0.0` for HTTP. Wheels and sdists are also attached to every
+GitHub Release (`pip install sheetmcp_core-*.whl sheetmcp-*.whl`).
+
 ## Development
 
 ```bash
@@ -342,6 +356,19 @@ npx @modelcontextprotocol/inspector uv run sheetmcp examples/data   # inspect in
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). License: [MIT](LICENSE).
+
+## Releasing
+
+[`VERSION.md`](VERSION.md) holds the release version on its first line. To ship a release, add the notes to
+`CHANGELOG.md`, bump that line and push to `main`. The `Release` workflow tags `vX.Y.Z`, creates the GitHub
+Release (wheels and sdists attached) and publishes to PyPI and ghcr.io only when the new version is greater
+than the latest tag; an equal or lower version is a green no-op. Package versions are synced from
+`VERSION.md` automatically (`python scripts/version.py sync` does the same locally).
+
+Maintainer setup for PyPI (either one): add a trusted publisher on PyPI for each of `sheetmcp-core`,
+`sheetmcp` and `sheetmcp-cli` (owner `cryptodeta`, repository `sheetmcp`, workflow `release.yml`, no
+environment), or add a `PYPI_API_TOKEN` repository secret. Without either, the PyPI step is skipped with a
+warning; ghcr.io uses the built-in `GITHUB_TOKEN`.
 
 ## Known limitations
 

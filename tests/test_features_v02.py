@@ -433,8 +433,10 @@ def test_sheetcli_new_commands(data_dir: Path, capsys, monkeypatch):
 
 
 def test_info_mentions_new_formats(sheets: Sheets):
+    from sheetmcp_core import __version__
+
     info = Sheets(Config(roots=[str(sheets.sb.roots[0])])).info()
-    assert info["version"] == "0.2.0" and "ods" in info["supported_inputs"]
+    assert info["version"] == __version__ and "ods" in info["supported_inputs"]
 
 
 def test_csv_cache_has_clean_line_endings(sheets: Sheets, data_dir: Path):
