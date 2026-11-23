@@ -9,7 +9,7 @@ import make_samples  # registered by conftest
 import openpyxl
 import pytest
 
-from sheetmcp_core import Config, SheetError, Sheets
+from sheetmcp.core import Config, SheetError, Sheets
 
 
 @pytest.fixture()
@@ -416,7 +416,7 @@ def test_build_report(sheets: Sheets, data_dir: Path):
 
 # ------------------------------------------------------------------ CLI additions
 def test_sheetcli_new_commands(data_dir: Path, capsys, monkeypatch):
-    from sheetmcp_cli.main import main
+    from sheetmcp.cli.main import main
 
     monkeypatch.chdir(data_dir)
     assert main(["look"]) == 0
@@ -433,14 +433,14 @@ def test_sheetcli_new_commands(data_dir: Path, capsys, monkeypatch):
 
 
 def test_info_mentions_new_formats(sheets: Sheets):
-    from sheetmcp_core import __version__
+    from sheetmcp.core import __version__
 
     info = Sheets(Config(roots=[str(sheets.sb.roots[0])])).info()
     assert info["version"] == __version__ and "ods" in info["supported_inputs"]
 
 
 def test_csv_cache_has_clean_line_endings(sheets: Sheets, data_dir: Path):
-    from sheetmcp_core.fileio import excel_to_csv_cache
+    from sheetmcp.core.fileio import excel_to_csv_cache
 
     out, _ = excel_to_csv_cache(data_dir / "sales.xlsx", "Sales")
     raw = out.read_bytes()

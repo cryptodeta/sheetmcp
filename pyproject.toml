@@ -1,20 +1,41 @@
 [project]
-name = "sheetmcp-workspace"
-version = "0.2.0"
-description = "Workspace root for SheetMCP (not published)"
+name = "sheetmcp"
+version = "0.3.0"
+description = "The Excel/CSV MCP server that actually works: formulas, SQL across many files, safe writes. No API keys. Includes the sheetmcp.core engine and the sheetcli tool."
+readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["sheetmcp", "sheetmcp-core", "sheetmcp-cli"]
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [{ name = "SheetMCP contributors" }]
+keywords = ["mcp", "model-context-protocol", "excel", "xlsx", "csv", "parquet", "duckdb", "openpyxl", "spreadsheet", "llm", "claude", "cursor"]
+classifiers = [
+  "Programming Language :: Python :: 3",
+  "Operating System :: OS Independent",
+  "Topic :: Office/Business :: Financial :: Spreadsheet",
+]
+dependencies = ["openpyxl>=3.1", "duckdb>=1.1", "mcp>=1.12,<2"]
 
-[tool.uv]
-package = false
+[project.optional-dependencies]
+xls = ["xlrd>=2.0.1"]
 
-[tool.uv.workspace]
-members = ["packages/*"]
+[project.scripts]
+sheetmcp = "sheetmcp.__main__:main"
+sheetcli = "sheetmcp.cli.main:main"
 
-[tool.uv.sources]
-sheetmcp = { workspace = true }
-sheetmcp-core = { workspace = true }
-sheetmcp-cli = { workspace = true }
+[project.urls]
+Homepage = "https://github.com/cryptodeta/sheetmcp"
+Issues = "https://github.com/cryptodeta/sheetmcp/issues"
+Changelog = "https://github.com/cryptodeta/sheetmcp/blob/main/CHANGELOG.md"
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/sheetmcp"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/src/sheetmcp", "/tests", "/README.md", "/LICENSE", "/CHANGELOG.md"]
 
 [dependency-groups]
 dev = ["pytest>=8", "pytest-cov>=5", "ruff>=0.6", "anyio>=4", "xlrd>=2.0.1", "xlwt>=1.3"]
@@ -26,7 +47,7 @@ addopts = "-ra"
 [tool.ruff]
 line-length = 110
 target-version = "py310"
-src = ["packages/core/src", "packages/server/src", "packages/cli/src", "tests"]
+src = ["src", "tests"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF"]

@@ -1,4 +1,4 @@
-"""MCP server exposing the sheetmcp_core engine as a compact set of tools, resources and prompts."""
+"""MCP server exposing the sheetmcp.core engine as a compact set of tools, resources and prompts."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import Field
 
-from sheetmcp_core import Config, SheetError, Sheets, __version__
+from sheetmcp.core import Config, SheetError, Sheets, __version__
 
 log = logging.getLogger("sheetmcp")
 

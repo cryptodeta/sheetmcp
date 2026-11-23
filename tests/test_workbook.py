@@ -3,7 +3,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from sheetmcp_core import ReadOnlyError, SheetError
+from sheetmcp.core import ReadOnlyError, SheetError
 
 
 def test_describe_xlsx(sheets):
@@ -127,7 +127,7 @@ def test_insert_cols_by_letter(sheets, data_dir: Path):
 
 
 def test_streaming_mode_for_big_files(sheets, monkeypatch):
-    import sheetmcp_core.workbook as wbmod
+    import sheetmcp.core.workbook as wbmod
 
     monkeypatch.setattr(wbmod, "BIG_FILE_BYTES", 0)  # treat every file as "big"
     d = sheets.describe("sales.xlsx")

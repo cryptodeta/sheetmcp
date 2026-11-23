@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from sheetmcp_core import Config, Sheets
+from sheetmcp.core import Config, Sheets
 
 ROOT = Path(__file__).resolve().parent.parent
 _spec = importlib.util.spec_from_file_location("make_samples", ROOT / "examples" / "make_samples.py")

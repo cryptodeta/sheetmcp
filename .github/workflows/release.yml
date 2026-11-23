@@ -79,10 +79,13 @@ jobs:
       - name: Build wheels and sdists
         run: |
           rm -rf dist
-          uv build --all-packages --out-dir dist
+          uv build --out-dir dist
+          test "$(ls dist | wc -l)" = 2
           ls -l dist
       - name: Smoke test wheels
-        run: uvx --no-cache --find-links dist --from "sheetmcp==$VERSION" sheetmcp --version
+        run: |
+          uvx --no-cache --find-links dist --from "sheetmcp==$VERSION" sheetmcp --version
+          uvx --no-cache --find-links dist --from "sheetmcp==$VERSION" sheetcli --version
       - name: Commit synced versions
         run: |
           git config user.name "github-actions[bot]"
@@ -108,9 +111,9 @@ jobs:
 
           ## Install
 
-          - PyPI: \`uvx sheetmcp==$VERSION\` or \`pip install sheetmcp==$VERSION\` (CLI: \`pip install sheetmcp-cli==$VERSION\`)
+          - PyPI: \`uvx sheetmcp@$VERSION\` or \`pip install sheetmcp==$VERSION\` (includes \`sheetcli\`)
           - Docker (GitHub Packages): \`docker pull $IMAGE:$VERSION\`
-          - Wheels and sdists are attached below.
+          - The wheel and sdist are attached below.
           NOTES
           flags=()
           [ "${{ needs.check.outputs.prerelease }}" = "true" ] && flags+=(--prerelease)
@@ -160,10 +163,10 @@ jobs:
             echo "publish=true" >> "$GITHUB_OUTPUT"
           else
             echo "publish=false" >> "$GITHUB_OUTPUT"
-            msg="PyPI publish skipped: no trusted publisher matches this workflow (HTTP $code). Add pending publishers for sheetmcp-core, sheetmcp and sheetmcp-cli (README > Releasing), then re-run with republish."
+            msg="PyPI publish skipped: no trusted publisher matches this workflow (HTTP $code). Add the trusted publisher on the sheetmcp PyPI project (README > Releasing), then re-run with republish."
             echo "::warning::$msg"; echo "$msg" >> "$GITHUB_STEP_SUMMARY"
           fi
-      - name: Publish sheetmcp-core, sheetmcp, sheetmcp-cli
+      - name: Publish sheetmcp
         if: steps.probe.outputs.publish == 'true'
         uses: pypa/gh-action-pypi-publish@release/v1
         with:

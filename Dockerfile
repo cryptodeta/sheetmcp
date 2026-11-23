@@ -3,14 +3,14 @@ FROM python:3.12-slim AS build
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 WORKDIR /src
 COPY . .
-RUN uv build --all-packages --out-dir /wheels
+RUN uv build --wheel --out-dir /wheels
 
 FROM python:3.12-slim
 LABEL org.opencontainers.image.title="sheetmcp" \
       org.opencontainers.image.description="Excel/CSV MCP server: formulas, SQL across files, safe writes" \
       org.opencontainers.image.licenses="MIT"
 COPY --from=build /wheels /wheels
-RUN pip install --no-cache-dir /wheels/sheetmcp_core-*.whl /wheels/sheetmcp-*.whl /wheels/sheetmcp_cli-*.whl \
+RUN pip install --no-cache-dir /wheels/sheetmcp-*.whl \
     && rm -rf /wheels \
     && useradd --create-home --uid 1000 app && mkdir -p /data && chown app /data
 USER app

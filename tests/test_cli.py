@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from sheetmcp_cli.main import main
+from sheetmcp.cli.main import main
 
 
 def test_cli_query_and_convert(data_dir: Path, capsys):

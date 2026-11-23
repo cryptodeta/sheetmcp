@@ -5,7 +5,7 @@ uv run python examples/python_usage.py
 
 from pathlib import Path
 
-from sheetmcp_core import Config, Sheets
+from sheetmcp.core import Config, Sheets
 
 data = Path(__file__).parent / "data"
 if not (data / "sales.xlsx").exists():

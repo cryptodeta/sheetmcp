@@ -218,7 +218,7 @@ def doctor(argv: list[str]) -> int:
         import mcp
         import openpyxl
 
-        from sheetmcp_core import Config, Sheets, __version__
+        from sheetmcp.core import Config, Sheets, __version__
 
         add(
             "packages",

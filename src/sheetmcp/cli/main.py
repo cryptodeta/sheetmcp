@@ -23,7 +23,7 @@ import json
 import sys
 from typing import Any
 
-from sheetmcp_core import Config, SheetError, Sheets, __version__
+from sheetmcp.core import Config, SheetError, Sheets, __version__
 
 
 def _out(res: Any, md: bool = False) -> None:

@@ -13,7 +13,7 @@ import logging
 import os
 import sys
 
-from sheetmcp_core import Config, SheetError, __version__
+from sheetmcp.core import Config, SheetError, __version__
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:

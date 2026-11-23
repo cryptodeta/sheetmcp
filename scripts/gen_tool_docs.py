@@ -7,7 +7,7 @@ import tempfile
 from pathlib import Path
 
 from sheetmcp import build_server
-from sheetmcp_core import Config
+from sheetmcp.core import Config
 
 
 def _type(s: dict) -> str:

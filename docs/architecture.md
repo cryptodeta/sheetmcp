@@ -5,9 +5,9 @@
             │                         MCP (stdio or streamable HTTP)                        │
             └───────────────────────────────────────┬───────────────────────────────────────┘
                                                     │
-packages/server  sheetmcp ─ FastMCP: 24 tools, resources, prompts, error → ToolError mapping
+sheetmcp         server.py ─ FastMCP: 24 tools, resources, prompts, error → ToolError mapping
                                                     │  (thin: no logic, just schemas + calls)
-packages/core    sheetmcp_core.Sheets  (facade made of mixins)
+sheetmcp.core    Sheets  (facade made of mixins)
                  ├─ workbook.py   describe / read_range / write_range / manage_sheets / insert_delete
                  ├─ sqlops.py     query / transform / aggregate / combine / convert / profile (DuckDB)
                  ├─ formulaops.py list / errors / trace / evaluate / stats
@@ -20,8 +20,8 @@ packages/core    sheetmcp_core.Sheets  (facade made of mixins)
                  ├─ fileio.py     type detection, workbook LRU cache, atomic save + backups, xlsx→csv cache
                  ├─ paths.py      sandbox (allowed roots, did-you-mean)
                  └─ config.py     env/CLI configuration
-packages/server  setup_cmd.py ─ `sheetmcp install / uninstall / doctor`
-packages/cli     sheetcli ─ argparse wrapper over the same facade
+sheetmcp         setup_cmd.py ─ `sheetmcp install / uninstall / doctor`
+sheetmcp.cli     sheetcli ─ argparse wrapper over the same facade
 ```
 
 ## Key design decisions

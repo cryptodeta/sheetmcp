@@ -6,7 +6,7 @@ formulas, and build formatted reports with charts in one call. Pure Python, runs
 **no Excel, no API keys, no cloud.**
 
 ```bash
-pip install ./packages/core ./packages/server   # from a clone of this repo
+pip install sheetmcp                             # or run it without installing: uvx sheetmcp
 sheetmcp install ~/Documents/spreadsheets        # adds SheetMCP to Claude Desktop / Cursor / Windsurf ...
 sheetmcp doctor                                  # checks that everything works
 ```
@@ -36,17 +36,19 @@ Then ask your AI: *"Take a quick look at my spreadsheets and tell me what's ther
 
 ## 1-minute quickstart
 
-Install from PyPI (`uvx sheetmcp` / `pip install sheetmcp`, see [Install from a registry](#install-from-a-registry))
-once a release is published there, or from this repository:
-
 ```bash
-git clone https://github.com/cryptodeta/sheetmcp && cd sheetmcp
-pip install ./packages/core ./packages/server          # add ./packages/cli for the `sheetcli` tool
-# optional: legacy .xls support
-pip install xlrd
+pip install sheetmcp            # the MCP server (`sheetmcp`) and the terminal tool (`sheetcli`)
+pip install "sheetmcp[xls]"     # optional: legacy .xls support
+uvx sheetmcp --version          # or run it with uv, no install step
 ```
 
-(With [uv](https://docs.astral.sh/uv/): `uv sync` and prefix commands with `uv run`.)
+From a clone instead: `pip install .` (with [uv](https://docs.astral.sh/uv/): `uv sync`, then prefix commands
+with `uv run`).
+
+> **Note:** as of 0.3.0, `sheetmcp-core` and `sheetmcp-cli` are merged into the single `sheetmcp` package.
+> The engine is now `sheetmcp.core` (was `sheetmcp_core`) and `sheetcli` ships with `sheetmcp`. Uninstall the
+> old packages (`pip uninstall sheetmcp-core sheetmcp-cli`) and change `from sheetmcp_core import ...` to
+> `from sheetmcp.core import ...`.
 
 ### Easiest: `sheetmcp install`
 
@@ -73,8 +75,7 @@ sheetcli --root ./examples/data query "SELECT Region, sum(Revenue) FROM sales GR
 
 ### Manual configuration
 
-The snippets below use `uvx sheetmcp`, which works once the package is published or installed as a uv tool
-(`uv tool install ./packages/server`). With a plain `pip install`, use `"command": "sheetmcp"` (or the full
+The snippets below use `uvx sheetmcp`, which downloads and runs the PyPI package. With a plain `pip install`, use `"command": "sheetmcp"` (or the full
 path of your Python with `"args": ["-m", "sheetmcp", "<folder>"]`). The default folder is the current
 directory when none is given.
 
@@ -285,7 +286,7 @@ math like `SUM(B2:B9*C2:C9)`, and structured references (`Sales[Qty]`, `[@Price]
 ## Python library & CLI
 
 ```python
-from sheetmcp_core import Sheets, Config
+from sheetmcp.core import Sheets, Config
 
 s = Sheets(Config(roots=["./data"]))
 s.read_range("sales.xlsx", "Summary", "A1:C6")  # values + formulas
@@ -324,9 +325,9 @@ rewriting the file. Core dependencies: **openpyxl + duckdb** only (`xlrd` option
 ## Repository layout
 
 ```
-packages/core     sheetmcp-core: the engine (no MCP dependency)
-packages/server   sheetmcp: MCP server (stdio + streamable HTTP), tools/resources/prompts
-packages/cli      sheetmcp-cli: `sheetcli` terminal tool
+src/sheetmcp/          MCP server (stdio + streamable HTTP), tools/resources/prompts, install/doctor
+src/sheetmcp/core/     the engine, importable as `sheetmcp.core` (no MCP dependency)
+src/sheetmcp/cli/      `sheetcli` terminal tool
 examples/         sample data generator, client configs, Python usage
 docs/             tool reference, architecture
 tests/            pytest suite (fixtures generated on the fly)
@@ -338,17 +339,17 @@ Every release is published to two places (see [Releases](https://github.com/cryp
 
 | Registry | Package | Install |
 | --- | --- | --- |
-| PyPI | [`sheetmcp`](https://pypi.org/project/sheetmcp/), [`sheetmcp-core`](https://pypi.org/project/sheetmcp-core/), [`sheetmcp-cli`](https://pypi.org/project/sheetmcp-cli/) | `uvx sheetmcp` or `pip install sheetmcp` (`pip install sheetmcp-cli` for `sheetcli`) |
+| PyPI | [`sheetmcp`](https://pypi.org/project/sheetmcp/) | `uvx sheetmcp` or `pip install sheetmcp` (includes `sheetcli`) |
 | GitHub Packages (ghcr.io) | [`ghcr.io/cryptodeta/sheetmcp`](https://github.com/cryptodeta/sheetmcp/pkgs/container/sheetmcp) | `docker pull ghcr.io/cryptodeta/sheetmcp:latest` |
 
 Docker: `docker run -i --rm -v "$PWD:/data" ghcr.io/cryptodeta/sheetmcp` (stdio), or add
-`-p 8000:8000 ... --transport http --host 0.0.0.0` for HTTP. Wheels and sdists are also attached to every
-GitHub Release (`pip install sheetmcp_core-*.whl sheetmcp-*.whl`).
+`-p 8000:8000 ... --transport http --host 0.0.0.0` for HTTP. The wheel and sdist are also attached to every
+GitHub Release (`pip install sheetmcp-*.whl`).
 
 ## Development
 
 ```bash
-uv sync                 # create .venv with all workspace packages + dev tools
+uv sync                 # create .venv with sheetmcp (editable) + dev tools
 uv run pytest           # 200 tests
 uv run ruff check . && uv run ruff format --check .
 uv run sheetmcp examples/data                     # run the server
@@ -361,38 +362,33 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). License: [MIT](LICENSE).
 
 [`VERSION.md`](VERSION.md) holds the release version on its first line. To ship a release, add the notes to
 `CHANGELOG.md`, bump that line and push to `main`. The `Release` workflow tags `vX.Y.Z`, creates the GitHub
-Release (wheels and sdists attached) and publishes to PyPI and ghcr.io only when the new version is greater
+Release (wheel and sdist attached) and publishes to PyPI and ghcr.io only when the new version is greater
 than the latest tag; an equal or lower version is a green no-op. Package versions are synced from
 `VERSION.md` automatically (`python scripts/version.py sync` does the same locally).
 
 ### PyPI trusted publishing (no tokens)
 
 PyPI releases use [trusted publishing](https://docs.pypi.org/trusted-publishers/) (OIDC), so there is no
-API token secret. Before the first upload, add a **pending publisher** on pypi.org
-(**Your account** -> **Publishing** -> **Add a new pending publisher** -> **GitHub**) three times, once per
-project, with these values:
+API token secret. On pypi.org open the `sheetmcp` project, then **Manage** -> **Settings** -> **Publishing**
+-> **Add a new publisher** -> **GitHub**, with these values:
 
 | Field | Value |
 | --- | --- |
-| PyPI Project Name | `sheetmcp-core`, then `sheetmcp`, then `sheetmcp-cli` |
 | Owner | `cryptodeta` |
 | Repository name | `sheetmcp` |
 | Workflow name | `release.yml` |
 | Environment name | `pypi` |
 
-The `pypi` job runs in the `pypi` GitHub environment, which already exists in this repository. Once the
-projects exist, the publishers show up under each project's **Settings** -> **Publishing**.
+The `pypi` job runs in the `pypi` GitHub environment, which already exists in this repository.
 
-Bumping `VERSION.md` on `main` then publishes all three packages. To publish a version whose tag already exists
+Bumping `VERSION.md` on `main` then publishes the `sheetmcp` wheel and sdist. To publish a version whose tag already exists
 (for example the current one, or after a failed run), run the `Release` workflow manually with **republish**
 checked (`gh workflow run release.yml -f republish=true`); it uploads the files attached to that GitHub Release
-and never creates a second tag or release. Until the publishers are configured, the PyPI job ends green with a
+and never creates a second tag or release. Until the publisher is configured, the PyPI job ends green with a
 warning. ghcr.io uses the built-in `GITHUB_TOKEN` and needs no setup.
 
 ## Known limitations
 
-* Not published to PyPI yet: install from this repository (see Quickstart). `uvx sheetmcp` works only after
-  `uv tool install ./packages/server` or a future PyPI release.
 * `.xls`, `.ods` and HTML are **read-only** inputs (convert to `.xlsx` to edit). `.xls` needs the optional `xlrd`
   package (`pip install xlrd`, or the `xls` extra). Password-protected files can't be opened.
 * openpyxl preserves most content but drops some exotic objects on save (shapes, form controls, some chart styling,

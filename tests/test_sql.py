@@ -4,7 +4,7 @@ from pathlib import Path
 import openpyxl
 import pytest
 
-from sheetmcp_core import SheetError
+from sheetmcp.core import SheetError
 
 
 def test_query_auto_registers_files(sheets):

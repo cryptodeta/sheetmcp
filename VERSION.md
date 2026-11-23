@@ -1,9 +1,8 @@
-0.2.0
+0.3.0
 
 # Release version
 
-The first line of this file is the release version of every package in this repository
-(`sheetmcp-core`, `sheetmcp`, `sheetmcp-cli`). It is the only thing you change to ship a release.
+The first line of this file is the release version of the `sheetmcp` package. It is the only thing you change to ship a release.
 
 ## How to release
 
@@ -14,8 +13,8 @@ The first line of this file is the release version of every package in this repo
 
 The `Release` workflow then compares this version with the latest `v*` git tag:
 
-- **Greater**: syncs the version into every `pyproject.toml`, `__version__` and `uv.lock`
-  (`python scripts/version.py sync`), runs lint and tests, builds wheels and sdists, creates the tag `vX.Y.Z`
+- **Greater**: syncs the version into `pyproject.toml`, `sheetmcp.__version__` and `uv.lock`
+  (`python scripts/version.py sync`), runs lint and tests, builds the wheel and sdist, creates the tag `vX.Y.Z`
   and a GitHub Release with the files attached, then publishes to PyPI (trusted publishing, no token) and to GitHub Packages as the Docker
   image `ghcr.io/cryptodeta/sheetmcp`.
 - **Equal or lower**: nothing is tagged or published; the workflow finishes green with a skip note.
@@ -23,4 +22,4 @@ The `Release` workflow then compares this version with the latest `v*` git tag:
 Run `python scripts/version.py sync` locally if you want the package files updated in the same commit.
 
 To retry publishing an existing tag, run the `Release` workflow manually with `republish` checked.
-See the Releasing section of README.md for the PyPI pending publisher setup.
+See the Releasing section of README.md for the PyPI trusted publisher setup.

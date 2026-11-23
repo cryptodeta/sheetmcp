@@ -10,14 +10,6 @@ resolution-markers = [
     "python_full_version < '3.11' and sys_platform != 'win32'",
 ]
 
-[manifest]
-members = [
-    "sheetmcp",
-    "sheetmcp-cli",
-    "sheetmcp-core",
-    "sheetmcp-workspace",
-]
-
 [[package]]
 name = "annotated-types"
 version = "0.8.0"
@@ -1435,68 +1427,18 @@ wheels = [
 
 [[package]]
 name = "sheetmcp"
-version = "0.2.0"
-source = { editable = "packages/server" }
-dependencies = [
-    { name = "mcp" },
-    { name = "sheetmcp-core" },
-]
-
-[package.optional-dependencies]
-xls = [
-    { name = "sheetmcp-core", extra = ["xls"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "mcp", specifier = ">=1.12,<2" },
-    { name = "sheetmcp-core", editable = "packages/core" },
-    { name = "sheetmcp-core", extras = ["xls"], marker = "extra == 'xls'", editable = "packages/core" },
-]
-provides-extras = ["xls"]
-
-[[package]]
-name = "sheetmcp-cli"
-version = "0.2.0"
-source = { editable = "packages/cli" }
-dependencies = [
-    { name = "sheetmcp-core" },
-]
-
-[package.metadata]
-requires-dist = [{ name = "sheetmcp-core", editable = "packages/core" }]
-
-[[package]]
-name = "sheetmcp-core"
-version = "0.2.0"
-source = { editable = "packages/core" }
+version = "0.3.0"
+source = { editable = "." }
 dependencies = [
     { name = "duckdb", version = "1.5.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "duckdb", version = "2.0.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
+    { name = "mcp" },
     { name = "openpyxl" },
 ]
 
 [package.optional-dependencies]
 xls = [
     { name = "xlrd" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "duckdb", specifier = ">=1.1" },
-    { name = "openpyxl", specifier = ">=3.1" },
-    { name = "xlrd", marker = "extra == 'xls'", specifier = ">=2.0.1" },
-]
-provides-extras = ["xls"]
-
-[[package]]
-name = "sheetmcp-workspace"
-version = "0.2.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "sheetmcp" },
-    { name = "sheetmcp-cli" },
-    { name = "sheetmcp-core" },
 ]
 
 [package.dev-dependencies]
@@ -1511,10 +1453,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "sheetmcp", editable = "packages/server" },
-    { name = "sheetmcp-cli", editable = "packages/cli" },
-    { name = "sheetmcp-core", editable = "packages/core" },
+    { name = "duckdb", specifier = ">=1.1" },
+    { name = "mcp", specifier = ">=1.12,<2" },
+    { name = "openpyxl", specifier = ">=3.1" },
+    { name = "xlrd", marker = "extra == 'xls'", specifier = ">=2.0.1" },
 ]
+provides-extras = ["xls"]
 
 [package.metadata.requires-dev]
 dev = [

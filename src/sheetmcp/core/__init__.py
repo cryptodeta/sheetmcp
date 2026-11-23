@@ -1,7 +1,6 @@
-"""sheetmcp-core: fast, lightweight spreadsheet engine (xlsx / csv / parquet / json)."""
+"""sheetmcp.core: fast, lightweight spreadsheet engine (xlsx / csv / parquet / json). No MCP dependency."""
 
-__version__ = "0.2.0"
-
+from .. import __version__
 from .api import Sheets
 from .config import Config
 from .errors import ReadOnlyError, SheetError

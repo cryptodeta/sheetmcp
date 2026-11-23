@@ -6,7 +6,7 @@ import openpyxl
 import pytest
 from openpyxl.worksheet.table import Table
 
-from sheetmcp_core import Evaluator
+from sheetmcp.core import Evaluator
 
 
 @pytest.fixture()

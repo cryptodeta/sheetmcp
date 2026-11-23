@@ -6,16 +6,17 @@ Thanks for helping! The bar: **it must work reliably, and errors must say how to
 
 ```bash
 git clone <repo> && cd sheetmcp
-uv sync                      # installs all workspace packages (editable) + dev tools
+uv sync                      # installs sheetmcp (editable) + dev tools
 uv run pytest                # run tests
 uv run ruff check . && uv run ruff format .
 ```
 
 ## Where things go
 
-* Engine logic → `packages/core/src/sheetmcp_core/` (no MCP imports there).
+* Engine logic → `src/sheetmcp/core/` (no MCP imports there).
+* `sheetcli` → `src/sheetmcp/cli/main.py`.
 * New MCP tool → add the engine method first (with tests), then a thin wrapper in
-  `packages/server/src/sheetmcp/server.py` with `Annotated[..., Field(description=...)]` parameters.
+  `src/sheetmcp/server.py` with `Annotated[..., Field(description=...)]` parameters.
   Run `uv run python scripts/gen_tool_docs.py` to refresh `docs/tools.md`.
 * Prefer extending an existing tool (an `action` or option) over adding a new one; we keep the tool count small.
 * New formula function → `evaluator.py` (`@fn("NAME")`) + a case in `tests/test_evaluator.py`.
@@ -30,6 +31,5 @@ uv run ruff check . && uv run ruff format .
 
 ## Releasing
 
-1. Bump versions in the three `packages/*/pyproject.toml`, `sheetmcp_core/__init__.py` and the pinned
-   `sheetmcp-core==` dependency; update `CHANGELOG.md`.
-2. `uv build --all-packages` then `uv publish` (core first).
+Add a `CHANGELOG.md` section, bump the first line of [`VERSION.md`](VERSION.md) and push to `main`; the
+`Release` workflow does the rest (see the Releasing section of the README).

@@ -29,7 +29,7 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: uv sync --locked
-      - run: uv run pytest --cov=sheetmcp_core --cov=sheetmcp --cov-report=term-missing
+      - run: uv run pytest --cov=sheetmcp --cov-report=term-missing
 
   build:
     needs: test
@@ -37,10 +37,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: astral-sh/setup-uv@v7
-      - run: uv build --all-packages
+      - run: uv build
       - name: smoke test wheels
         run: |
           uvx --find-links dist --from sheetmcp sheetmcp --version
+          uvx --find-links dist --from sheetmcp sheetcli --version
       - uses: actions/upload-artifact@v6
         with:
           name: dist

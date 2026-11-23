@@ -1,7 +1,7 @@
 import openpyxl
 import pytest
 
-from sheetmcp_core import Evaluator
+from sheetmcp.core import Evaluator
 
 
 @pytest.fixture()

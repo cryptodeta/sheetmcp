@@ -9,7 +9,7 @@ from mcp.client.stdio import stdio_client
 from mcp.shared.memory import create_connected_server_and_client_session
 
 from sheetmcp import build_server
-from sheetmcp_core import Config
+from sheetmcp.core import Config
 
 EXPECTED_TOOLS = {
     "quick_look",

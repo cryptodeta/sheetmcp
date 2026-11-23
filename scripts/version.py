@@ -2,7 +2,7 @@
 """Release version helper. VERSION.md (first line) is the single source of truth.
 
 python scripts/version.py get            print the version from VERSION.md
-python scripts/version.py sync           write it into every pyproject.toml, __version__ and uv.lock
+python scripts/version.py sync           write it into pyproject.toml, sheetmcp.__version__ and uv.lock
 python scripts/version.py check          exit 1 if any file is out of sync with VERSION.md
 python scripts/version.py release-check  compare with the latest v* git tag (key=value lines for $GITHUB_OUTPUT)
 python scripts/version.py notes [ver]    print the CHANGELOG.md section for a version
@@ -20,7 +20,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$")
-INTERNAL = ("sheetmcp-core", "sheetmcp-cli", "sheetmcp")
 
 
 def read_version() -> str:
@@ -64,15 +63,12 @@ def compare(a: str, b: str) -> int:
 
 def plan(version: str) -> dict[Path, str]:
     changes: dict[Path, str] = {}
-    files = [ROOT / "pyproject.toml", *sorted(ROOT.glob("packages/*/pyproject.toml"))]
-    for f in files:
-        old = f.read_text(encoding="utf-8")
-        new = re.sub(r'(?m)^version = "[^"]*"', f'version = "{version}"', old, count=1)
-        for name in INTERNAL:
-            new = re.sub(rf'"{re.escape(name)}(\[[^\]]*\])?==[^"]*"', rf'"{name}\g<1>=={version}"', new)
-        if new != old:
-            changes[f] = new
-    for f in ROOT.glob("packages/*/src/*/__init__.py"):
+    f = ROOT / "pyproject.toml"
+    old = f.read_text(encoding="utf-8")
+    new = re.sub(r'(?m)^version = "[^"]*"', f'version = "{version}"', old, count=1)
+    if new != old:
+        changes[f] = new
+    for f in [ROOT / "src" / "sheetmcp" / "__init__.py"]:
         old = f.read_text(encoding="utf-8")
         new = re.sub(r'(?m)^__version__ = "[^"]*"', f'__version__ = "{version}"', old)
         if new != old:

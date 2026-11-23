@@ -3,6 +3,18 @@
 All notable changes to this project are documented here. Format: [Keep a Changelog](https://keepachangelog.com/),
 versioning: [SemVer](https://semver.org/).
 
+## [0.3.0] - 2026-11-23
+
+### Changed
+- **One package:** `sheetmcp-core` and `sheetmcp-cli` are merged into `sheetmcp`. `pip install sheetmcp` (or
+  `uvx sheetmcp`) now provides both the `sheetmcp` server and the `sheetcli` tool; the separate packages are
+  no longer published.
+- The engine moved from `sheetmcp_core` to `sheetmcp.core` and the CLI from `sheetmcp_cli` to `sheetmcp.cli`.
+  Update imports: `from sheetmcp.core import Sheets, Config`. `import sheetmcp.core` does not load the MCP SDK.
+- Legacy `.xls` support is the `sheetmcp[xls]` extra.
+- Releases are driven by `VERSION.md` and published with PyPI trusted publishing; the Docker image is on
+  `ghcr.io/cryptodeta/sheetmcp`.
+
 ## [0.2.0] - 2026-11-22
 
 ### Added
