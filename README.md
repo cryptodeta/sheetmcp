@@ -1,5 +1,13 @@
 # SheetMCP
 
+[![PyPI](https://img.shields.io/pypi/v/sheetmcp?logo=pypi&logoColor=white)](https://pypi.org/project/sheetmcp/)
+[![Python](https://img.shields.io/pypi/pyversions/sheetmcp)](https://pypi.org/project/sheetmcp/)
+[![CI](https://github.com/cryptodeta/sheetmcp/actions/workflows/ci.yml/badge.svg)](https://github.com/cryptodeta/sheetmcp/actions/workflows/ci.yml)
+[![Release](https://github.com/cryptodeta/sheetmcp/actions/workflows/release.yml/badge.svg)](https://github.com/cryptodeta/sheetmcp/actions/workflows/release.yml)
+[![GitHub release](https://img.shields.io/github/v/release/cryptodeta/sheetmcp)](https://github.com/cryptodeta/sheetmcp/releases)
+[![Docker](https://img.shields.io/badge/docker-ghcr.io%2Fcryptodeta%2Fsheetmcp-2496ED?logo=docker&logoColor=white)](https://github.com/cryptodeta/sheetmcp/pkgs/container/sheetmcp)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 **The Excel / CSV MCP server that actually works.** Read formulas *and* values, run SQL across a whole
 folder of spreadsheets, clean messy data, write safely without breaking formatting (with undo), audit
 formulas, and build formatted reports with charts in one call. Pure Python, runs on macOS / Linux / Windows,
@@ -14,6 +22,60 @@ sheetmcp doctor                                  # checks that everything works
 Then ask your AI: *"Take a quick look at my spreadsheets and tell me what's there."*
 
 ---
+
+## Install
+
+Requires Python 3.10 or newer. Published on [PyPI](https://pypi.org/project/sheetmcp/) and as a Docker image on
+[ghcr.io](https://github.com/cryptodeta/sheetmcp/pkgs/container/sheetmcp); every [GitHub Release](https://github.com/cryptodeta/sheetmcp/releases)
+also has the wheel and sdist attached. One package gives you both commands: `sheetmcp` (the MCP server) and
+`sheetcli` (the terminal tool).
+
+```bash
+# Run without installing (needs uv: https://docs.astral.sh/uv/)
+uvx sheetmcp --version
+
+# Install with pip
+pip install sheetmcp
+
+# Or as an isolated app with pipx
+pipx install sheetmcp
+
+# Optional extra: legacy .xls support (xlrd)
+pip install "sheetmcp[xls]"            # uvx --from "sheetmcp[xls]" sheetmcp / pipx install "sheetmcp[xls]"
+
+# Docker (stdio; mount the folder with your spreadsheets at /data)
+docker run -i --rm -v "$PWD:/data" ghcr.io/cryptodeta/sheetmcp
+# Docker over HTTP: http://localhost:8000/mcp
+docker run -d -p 8000:8000 -v "$PWD:/data" ghcr.io/cryptodeta/sheetmcp --transport http --host 0.0.0.0
+```
+
+Add it to your AI app (or run `sheetmcp install <folder>` to do it for you; more clients in
+[Manual configuration](#manual-configuration)):
+
+**Claude Desktop** (`claude_desktop_config.json`) and **Cursor** (`~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "sheets": { "command": "uvx", "args": ["sheetmcp", "/absolute/path/to/spreadsheets"] }
+  }
+}
+```
+
+**VS Code** (`.vscode/mcp.json`):
+
+```json
+{
+  "servers": {
+    "sheets": { "type": "stdio", "command": "uvx", "args": ["sheetmcp", "${workspaceFolder}"] }
+  }
+}
+```
+
+> **Note:** as of 0.3.0, `sheetmcp-core` and `sheetmcp-cli` are merged into the single `sheetmcp` package.
+> The engine is now `sheetmcp.core` (was `sheetmcp_core`) and `sheetcli` ships with `sheetmcp`. Uninstall the
+> old packages (`pip uninstall sheetmcp-core sheetmcp-cli`) and change `from sheetmcp_core import ...` to
+> `from sheetmcp.core import ...`.
 
 ## Why SheetMCP?
 
@@ -36,19 +98,9 @@ Then ask your AI: *"Take a quick look at my spreadsheets and tell me what's ther
 
 ## 1-minute quickstart
 
-```bash
-pip install sheetmcp            # the MCP server (`sheetmcp`) and the terminal tool (`sheetcli`)
-pip install "sheetmcp[xls]"     # optional: legacy .xls support
-uvx sheetmcp --version          # or run it with uv, no install step
-```
-
+Install it first (see [Install](#install)): `pip install sheetmcp`, or prefix the commands below with `uvx`.
 From a clone instead: `pip install .` (with [uv](https://docs.astral.sh/uv/): `uv sync`, then prefix commands
 with `uv run`).
-
-> **Note:** as of 0.3.0, `sheetmcp-core` and `sheetmcp-cli` are merged into the single `sheetmcp` package.
-> The engine is now `sheetmcp.core` (was `sheetmcp_core`) and `sheetcli` ships with `sheetmcp`. Uninstall the
-> old packages (`pip uninstall sheetmcp-core sheetmcp-cli`) and change `from sheetmcp_core import ...` to
-> `from sheetmcp.core import ...`.
 
 ### Easiest: `sheetmcp install`
 
@@ -75,8 +127,8 @@ sheetcli --root ./examples/data query "SELECT Region, sum(Revenue) FROM sales GR
 
 ### Manual configuration
 
-The snippets below use `uvx sheetmcp`, which downloads and runs the PyPI package. With a plain `pip install`, use `"command": "sheetmcp"` (or the full
-path of your Python with `"args": ["-m", "sheetmcp", "<folder>"]`). The default folder is the current
+The snippets below use `uvx sheetmcp`, which downloads and runs the PyPI package. With a plain
+`pip install` or `pipx install`, use `"command": "sheetmcp"` (or the full path of your Python with `"args": ["-m", "sheetmcp", "<folder>"]`). The default folder is the current
 directory when none is given.
 
 ### Claude Desktop
@@ -332,19 +384,6 @@ examples/         sample data generator, client configs, Python usage
 docs/             tool reference, architecture
 tests/            pytest suite (fixtures generated on the fly)
 ```
-
-## Install from a registry
-
-Every release is published to two places (see [Releases](https://github.com/cryptodeta/sheetmcp/releases)):
-
-| Registry | Package | Install |
-| --- | --- | --- |
-| PyPI | [`sheetmcp`](https://pypi.org/project/sheetmcp/) | `uvx sheetmcp` or `pip install sheetmcp` (includes `sheetcli`) |
-| GitHub Packages (ghcr.io) | [`ghcr.io/cryptodeta/sheetmcp`](https://github.com/cryptodeta/sheetmcp/pkgs/container/sheetmcp) | `docker pull ghcr.io/cryptodeta/sheetmcp:latest` |
-
-Docker: `docker run -i --rm -v "$PWD:/data" ghcr.io/cryptodeta/sheetmcp` (stdio), or add
-`-p 8000:8000 ... --transport http --host 0.0.0.0` for HTTP. The wheel and sdist are also attached to every
-GitHub Release (`pip install sheetmcp-*.whl`).
 
 ## Development
 

@@ -159,7 +159,7 @@ jobs:
             "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$aud" | jq -r .value)
           code=$(curl -s -o /dev/null -w '%{http_code}' -X POST https://pypi.org/_/oidc/mint-token \
             -H 'Content-Type: application/json' -d "{\"token\":\"$oidc\"}")
-          if [ "$code" = "200" ]; then
+          if [ "${code:0:1}" = "2" ]; then
             echo "publish=true" >> "$GITHUB_OUTPUT"
           else
             echo "publish=false" >> "$GITHUB_OUTPUT"
